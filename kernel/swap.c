@@ -47,8 +47,8 @@ swap_init(void)
   memset(swap_bitmap, 0, sizeof(swap_bitmap));
   release(&swap_lock);
 
-  printk("Swap initialized: %d slots, %d bytes bitmap\n",
-         SWAP_SLOTS, SWAP_BITMAP_SIZE);
+  printk("Swap initialized: %d slots, %d bytes bitmap\n", SWAP_SLOTS,
+         SWAP_BITMAP_SIZE);
 }
 
 // Allocate one free swap slot

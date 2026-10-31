@@ -13,8 +13,8 @@
 #include "buf.h"
 #include "virtio.h"
 
-#define NDISK 2
-#define SECTOR_SIZE 512
+#define NDISK            2
+#define SECTOR_SIZE      512
 #define SECTORS_PER_PAGE (PGSIZE / SECTOR_SIZE)
 
 // Access MMIO registers of a specific device.
@@ -54,8 +54,7 @@ virtio_disk_init_one(struct disk *d, uint64 mmio, char *name)
   initlock(&d->vdisk_lock, name);
 
   if (*R(d, VIRTIO_MMIO_MAGIC_VALUE) != 0x74726976 ||
-      *R(d, VIRTIO_MMIO_VERSION) != 2 ||
-      *R(d, VIRTIO_MMIO_DEVICE_ID) != 2 ||
+      *R(d, VIRTIO_MMIO_VERSION) != 2 || *R(d, VIRTIO_MMIO_DEVICE_ID) != 2 ||
       *R(d, VIRTIO_MMIO_VENDOR_ID) != 0x554d4551) {
     panic("could not find virtio disk");
   }
@@ -121,23 +120,17 @@ virtio_disk_init_one(struct disk *d, uint64 mmio, char *name)
 
   *R(d, VIRTIO_MMIO_QUEUE_NUM) = NUM;
 
-  *R(d, VIRTIO_MMIO_QUEUE_DESC_LOW) =
-      (uint64)d->desc;
+  *R(d, VIRTIO_MMIO_QUEUE_DESC_LOW) = (uint64)d->desc;
 
-  *R(d, VIRTIO_MMIO_QUEUE_DESC_HIGH) =
-      (uint64)d->desc >> 32;
+  *R(d, VIRTIO_MMIO_QUEUE_DESC_HIGH) = (uint64)d->desc >> 32;
 
-  *R(d, VIRTIO_MMIO_DRIVER_DESC_LOW) =
-      (uint64)d->avail;
+  *R(d, VIRTIO_MMIO_DRIVER_DESC_LOW) = (uint64)d->avail;
 
-  *R(d, VIRTIO_MMIO_DRIVER_DESC_HIGH) =
-      (uint64)d->avail >> 32;
+  *R(d, VIRTIO_MMIO_DRIVER_DESC_HIGH) = (uint64)d->avail >> 32;
 
-  *R(d, VIRTIO_MMIO_DEVICE_DESC_LOW) =
-      (uint64)d->used;
+  *R(d, VIRTIO_MMIO_DEVICE_DESC_LOW) = (uint64)d->used;
 
-  *R(d, VIRTIO_MMIO_DEVICE_DESC_HIGH) =
-      (uint64)d->used >> 32;
+  *R(d, VIRTIO_MMIO_DEVICE_DESC_HIGH) = (uint64)d->used >> 32;
 
   *R(d, VIRTIO_MMIO_QUEUE_READY) = 1;
 
@@ -230,8 +223,7 @@ alloc3_desc(struct disk *d, int *idx)
 
 // Generic block-device read/write operation.
 static void
-virtio_rw(struct disk *d, void *data,
-          uint len, uint64 sector, int write)
+virtio_rw(struct disk *d, void *data, uint len, uint64 sector, int write)
 {
   volatile int done = 0;
 
@@ -276,8 +268,7 @@ virtio_rw(struct disk *d, void *data,
   d->info[idx[0]].done = &done;
   d->info[idx[0]].b = 0;
 
-  d->desc[idx[2]].addr =
-      (uint64)&d->info[idx[0]].status;
+  d->desc[idx[2]].addr = (uint64)&d->info[idx[0]].status;
 
   d->desc[idx[2]].len = 1;
   d->desc[idx[2]].flags = VRING_DESC_F_WRITE;
@@ -349,8 +340,7 @@ virtio_disk_intr(int dev)
 
   acquire(&d->vdisk_lock);
 
-  *R(d, VIRTIO_MMIO_INTERRUPT_ACK) =
-      *R(d, VIRTIO_MMIO_INTERRUPT_STATUS) & 0x3;
+  *R(d, VIRTIO_MMIO_INTERRUPT_ACK) = *R(d, VIRTIO_MMIO_INTERRUPT_STATUS) & 0x3;
 
   io_fence();
 
