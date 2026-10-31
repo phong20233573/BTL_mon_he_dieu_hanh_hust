@@ -180,7 +180,14 @@ void            plic_complete(int);
 // virtio_disk.c
 void            virtio_disk_init(void);
 void            virtio_disk_rw(struct buf *, int);
-void            virtio_disk_intr(void);
+void		virtio_swap_rw(void *, uint, int);
+void            virtio_disk_intr(int);
 
+// Swap management
+void            swap_init(void);
+int             swap_alloc(void);
+void            swap_free(uint);
+void            swap_out(uint, void *);
+void            swap_in(uint, void *);
 // number of elements in fixed-size array
 #define NELEM(x) (sizeof(x) / sizeof((x)[0]))
