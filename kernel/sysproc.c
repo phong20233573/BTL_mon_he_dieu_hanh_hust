@@ -6,7 +6,7 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "vm.h"
-
+#include "swap.h"
 uint64
 sys_exit(void)
 {
@@ -109,4 +109,51 @@ sys_uptime(void)
   xticks = ticks;
   release(&tickslock);
   return xticks;
+}
+// Biến giả lập (Mock) dùng cho kiểm thử Tuần 1.
+// Sang Tuần 2-3 sẽ nối với biến thật của nhóm ở kalloc.c và trap.c.
+static struct swap_stat mock_kstat = {
+  .current_policy = POLICY_FIFO,
+  .page_faults = 10,
+  .swap_out_count = 5,
+  .swap_in_count = 3,
+  .used_slots = 2
+};
+
+uint64
+sys_swap_policy(void)
+{
+  int policy;
+  argint(0, &policy);
+
+  // Kiểm tra miền giá trị hợp lệ (0: FIFO, 1: CLOCK, 2: AGING, 3: WORKSET)
+  if(policy < POLICY_FIFO || policy > POLICY_WORKSET)
+    return -1;
+
+  mock_kstat.current_policy = policy;
+  // Giả lập việc reset các bộ đếm khi đổi thuật toán
+  mock_kstat.page_faults = 0;
+  mock_kstat.swap_out_count = 0;
+  mock_kstat.swap_in_count = 0;
+  return 0;
+}
+
+uint64
+sys_swap_stats(void)
+{
+  uint64 user_addr;
+  struct proc *p = myproc();
+
+  argaddr(0, &user_addr);
+
+  // Chốt chặn 1: Từ chối con trỏ NULL (0x0)
+  if(user_addr == 0)
+    return -1;
+
+  // Chốt chặn 2: Dùng copyout kiểm tra quyền ghi (PTE_W), quyền User (PTE_U)
+  // và chép dữ liệu từ Kernel sang User
+  if(copyout(p->pagetable,p->sz, user_addr, (char *)&mock_kstat, sizeof(mock_kstat)) < 0)
+    return -1;
+
+  return 0;
 }

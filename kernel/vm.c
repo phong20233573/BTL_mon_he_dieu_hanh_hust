@@ -144,7 +144,7 @@ walkaddr(pagetable_t pagetable, uint64 va)
 // Returns 0 on success, -1 if walk() couldn't
 // allocate a needed page-table page.
 int
-mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
+mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)//pa có được khi khi gọi kalloc() trong uvmalloc() hoặc vmfault()
 {
   uint64 a, last;
   pte_t *pte;
@@ -166,6 +166,12 @@ mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
     if (*pte & PTE_V)
       panic("mappages: remap");
     *pte = PA2PTE(pa) | perm | PTE_V;
+    // Register only user-accessible pages.
+    if (perm & PTE_U) {//Trong xv6, PTE_U là cờ cho phép truy cập trang từ chế độ User.
+     if (rmap_register(pa, pagetable, a) != 0) {
+        panic("mappages: rmap_register");
+      } 
+    }
     if (a == last)
       break;
     a += PGSIZE;
@@ -204,10 +210,22 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
       continue;
     if ((*pte & PTE_V) == 0) // has physical page been allocated?
       continue;
+    uint64 pa = PTE2PA(*pte);
+
+// Remove mapping metadata.
+if (*pte & PTE_U) {
     if (do_free) {
-      uint64 pa = PTE2PA(*pte);
-      kfree((void *)pa);
+        rmap_unregister(pa);
+    } else {
+        rmap_pin(pa);
     }
+}
+
+if (do_free) {
+    kfree((void *)pa);
+}
+
+*pte = 0;
     *pte = 0;
   }
 }
@@ -284,9 +302,16 @@ freewalk(pagetable_t pagetable)
 void
 uvmfree(pagetable_t pagetable, uint64 sz)
 {
-  if (sz > 0)
-    uvmunmap(pagetable, 0, PGROUNDUP(sz) / PGSIZE, 1);
-  freewalk(pagetable);
+    if (sz > 0)
+        uvmunmap(pagetable, 0,
+                 PGROUNDUP(sz) / PGSIZE, 1);
+
+    // All user mappings of this page table must be removed.
+    if (rmap_count_pt(pagetable) != 0) {
+        panic("uvmfree: rmap leak");
+    }
+
+    freewalk(pagetable);
 }
 
 // Given a parent process's page table, copy
@@ -333,9 +358,15 @@ uvmclear(pagetable_t pagetable, uint64 va)
   pte_t *pte;
 
   pte = walk(pagetable, va, 0);
-  if (pte == 0)
+
+if (pte == 0)
     panic("uvmclear");
-  *pte &= ~PTE_U;
+
+if (*pte & PTE_U) {
+    rmap_pin(PTE2PA(*pte));
+}
+
+*pte &= ~PTE_U;
 }
 
 // Copy from kernel to user.

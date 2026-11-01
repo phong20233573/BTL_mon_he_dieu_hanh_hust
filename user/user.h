@@ -1,7 +1,7 @@
 #define SBRK_ERROR ((char *)-1)
 
 struct stat;
-
+struct swap_stat;
 // system calls
 int fork(void);
 int exit(int) __attribute__((noreturn));
@@ -25,7 +25,8 @@ char *sys_sbrk(int, int);
 int pause(int);
 int uptime(void);
 int sync(void);
-
+int swap_policy(int policy);
+int swap_stats(struct swap_stat *stats);
 // ulib.c
 int stat(const char *, struct stat *);
 char *strcpy(char *, const char *);
