@@ -60,6 +60,14 @@ void            ireclaim(int);
 void*           kalloc(void);
 void            kfree(void *);
 void            kinit(void);
+// Reverse Mapping (RMAP)
+void rmap_mark_allocated(uint64 pa);
+int rmap_register(uint64 pa, pagetable_t pt, uint64 va);
+void rmap_pin(uint64 pa);
+void rmap_unregister(uint64 pa);
+
+uint64 select_victim_frame(void);
+int rmap_count_pt(pagetable_t pt);
 
 // log.c
 void            initlog(int, struct superblock*);
