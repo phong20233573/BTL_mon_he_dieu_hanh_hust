@@ -6,7 +6,7 @@
 void
 check(char *test_name, int condition)
 {
-  if(condition)
+  if (condition)
     printf("[PASS] %s\n", test_name);
   else
     printf("[FAIL] %s\n", test_name);
@@ -22,10 +22,12 @@ main(int argc, char *argv[])
 
   // TC1: Đọc dữ liệu giả lập ban đầu bằng con trỏ hợp lệ (&st)
   ret = swap_stats(&st);
-  printf(" -> Du lieu doc tu Kernel: policy=%d, faults=%d, out=%d, in=%d, slots=%d\n",
-         st.current_policy, (int)st.page_faults, (int)st.swap_out_count,
-         (int)st.swap_in_count, (int)st.used_slots);
-  check("TC1: swap_stats(&st) voi con tro hop le", ret == 0 && st.page_faults == 10);
+  printf(
+    " -> Du lieu doc tu Kernel: policy=%d, faults=%d, out=%d, in=%d, slots=%d\n",
+    st.current_policy, (int)st.page_faults, (int)st.swap_out_count,
+    (int)st.swap_in_count, (int)st.used_slots);
+  check("TC1: swap_stats(&st) voi con tro hop le",
+        ret == 0 && st.page_faults == 10);
 
   // TC2: Chuyển thuật toán hợp lệ sang CLOCK (1) và kiểm tra bộ đếm đã reset về 0
   ret = swap_policy(POLICY_CLOCK);
