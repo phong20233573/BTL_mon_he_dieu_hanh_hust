@@ -68,16 +68,11 @@ usertrap(void)
     syscall();
   } else if ((which_dev = devintr()) != 0) {
     // ok
-    } else if ((r_scause() == 12 ||
-              r_scause() == 13 ||
-              r_scause() == 15) &&
+  } else if ((r_scause() == 12 || r_scause() == 13 || r_scause() == 15) &&
              vmfault(p->pagetable, p->sz, r_stval(),
                      (r_scause() == 13) ? 1 : 0) != 0) {
     // Handle instruction, load, and store page faults.
     // This includes restoring swapped pages from swap storage.
-
-
-
 
   } else {
     printk("usertrap(): unexpected scause 0x%lx pid=%d\n", r_scause(), p->pid);

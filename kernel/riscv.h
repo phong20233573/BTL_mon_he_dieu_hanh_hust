@@ -399,20 +399,14 @@ typedef uint64 *pagetable_t; // 512 PTEs
 #define PTE_U (1L << 4) // user can access
 
 // Swap PTE: use RSW bit 8 to mark a page stored on swap disk.
-#define PTE_SWAP          (1L << 8)
+#define PTE_SWAP (1L << 8)
 
 // 14 bits are enough for 16384 swap slots.
 #define PTE_SWAP_SLOT(pte) (((pte) >> 10) & 0x3FFF)
 
 // Encode swap slot and original page permissions into a PTE.
-#define PTE_MAKE_SWAP(slot, flags) \
-  ((((uint64)(slot) & 0x3FFF) << 10) | \
-   (((flags) & 0x3FF) & ~PTE_V) | PTE_SWAP)
-
-
-
-
-
+#define PTE_MAKE_SWAP(slot, flags)                                             \
+  ((((uint64)(slot) & 0x3FFF) << 10) | (((flags) & 0x3FF) & ~PTE_V) | PTE_SWAP)
 
 // shift a physical address to the right place for a PTE.
 #define PA2PTE(pa) ((((uint64)pa) >> 12) << 10)

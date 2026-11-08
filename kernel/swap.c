@@ -18,14 +18,11 @@ static uchar swap_bitmap[SWAP_BITMAP_SIZE];
 static struct spinlock swap_lock;
 
 // Thống kê hoạt động Swap thực tế.
-static struct swap_stat swap_stats = {
-  .current_policy = POLICY_FIFO,
-  .page_faults = 0,
-  .swap_out_count = 0,
-  .swap_in_count = 0,
-  .used_slots = 0
-};
-
+static struct swap_stat swap_stats = {.current_policy = POLICY_FIFO,
+                                      .page_faults = 0,
+                                      .swap_out_count = 0,
+                                      .swap_in_count = 0,
+                                      .used_slots = 0};
 
 // Check whether a slot is allocated
 static int
@@ -143,7 +140,6 @@ swap_in(uint slot, void *page)
   swap_stats.swap_in_count++;
   release(&swap_lock);
 }
-
 
 // Copy thống kê Swap thực tế.
 void

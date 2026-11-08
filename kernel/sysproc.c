@@ -122,7 +122,6 @@ sys_swap_policy(void)
   return swap_set_policy(policy);
 }
 
-
 // Return actual Swap statistics to user space.
 uint64
 sys_swap_stats(void)
@@ -138,8 +137,8 @@ sys_swap_stats(void)
 
   swap_get_stats(&stats);
 
-  if (copyout(p->pagetable, p->sz, user_addr,
-              (char *)&stats, sizeof(stats)) < 0)
+  if (copyout(p->pagetable, p->sz, user_addr, (char *)&stats, sizeof(stats)) <
+      0)
     return -1;
 
   return 0;
