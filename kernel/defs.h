@@ -18,6 +18,7 @@ void            bwrite(struct buf*);
 void            bpin(struct buf*);
 void            bunpin(struct buf*);
 
+
 // console.c
 void            consoleinit(void);
 void            consoleintr(int);
@@ -50,6 +51,7 @@ void            iupdate(struct inode*);
 int             namecmp(const char*, const char*);
 struct inode*   namei(char*);
 struct inode*   nameiparent(char*, char*);
+
 int             readi(struct inode*, int, uint64, uint, uint);
 void            stati(struct inode*, struct stat*);
 int             writei(struct inode*, int, uint64, uint, uint);
@@ -60,6 +62,16 @@ void            ireclaim(int);
 void*           kalloc(void);
 void            kfree(void *);
 void            kinit(void);
+
+// RMAP - Reverse Mapping
+void            rmap_mark_allocated(uint64 pa);
+int             rmap_register(uint64 pa, pagetable_t pt, uint64 va);
+void            rmap_pin(uint64 pa);
+void            rmap_unregister(uint64 pa);
+int             rmap_select_victim(uint64 *, pagetable_t *, uint64 *);
+int             rmap_count_pt(pagetable_t pt);
+void            rmap_release_victim(uint64);
+
 
 // log.c
 void            initlog(int, struct superblock*);
@@ -184,10 +196,18 @@ void		virtio_swap_rw(void *, uint, int);
 void            virtio_disk_intr(int);
 
 // Swap management
+struct swap_stat;
+
 void            swap_init(void);
 int             swap_alloc(void);
 void            swap_free(uint);
 void            swap_out(uint, void *);
 void            swap_in(uint, void *);
+int             swapout_one(void);
+
+void            swap_get_stats(struct swap_stat *);
+int             swap_set_policy(int);
+void            swap_page_fault(void);
+
 // number of elements in fixed-size array
 #define NELEM(x) (sizeof(x) / sizeof((x)[0]))

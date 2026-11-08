@@ -1,11 +1,19 @@
-OUTPUT_ARCH( "riscv" )
-ENTRY( _entry )
+OUTPUT_ARCH("riscv")
+ENTRY(_entry)
+
+/* Separate LOAD segments to avoid RWX permissions. */
+PHDRS
+{
+  text   PT_LOAD FLAGS(5);  /* Read + Execute */
+  rodata PT_LOAD FLAGS(4);  /* Read only */
+  data   PT_LOAD FLAGS(6);  /* Read + Write */
+}
 
 SECTIONS
 {
   /*
-   * ensure that entry.S / _entry is at 0x80000000,
-   * where qemu's -kernel jumps.
+   * Ensure that entry.S / _entry is at 0x80000000,
+   * where QEMU's -kernel jumps.
    */
   . = 0x80000000;
 
@@ -16,30 +24,34 @@ SECTIONS
     _trampoline = .;
     *(trampsec)
     . = ALIGN(0x1000);
-    ASSERT(. - _trampoline == 0x1000, "error: trampoline larger than one page");
+    ASSERT(. - _trampoline == 0x1000,
+           "error: trampoline larger than one page");
     PROVIDE(etext = .);
-  }
+  } :text
 
   .rodata : {
-    . = ALIGN(16);
-    *(.srodata .srodata.*) /* do not need to distinguish this from .rodata */
-    . = ALIGN(16);
+    . = ALIGN(0x1000);
+    *(.srodata .srodata.*)
     *(.rodata .rodata.*)
-  }
+    *(.eh_frame .eh_frame.*)
+    . = ALIGN(0x1000);
+  } :rodata
 
   .data : {
-    . = ALIGN(16);
-    *(.sdata .sdata.*) /* do not need to distinguish this from .data */
-    . = ALIGN(16);
+    . = ALIGN(0x1000);
+    *(.sdata .sdata.*)
     *(.data .data.*)
-  }
+    *(.got .got.*)
+    *(.got.plt)
+  } :data
 
   .bss : {
-    . = ALIGN(16);
-    *(.sbss .sbss.*) /* do not need to distinguish this from .bss */
-    . = ALIGN(16);
+    . = ALIGN(0x1000);
+    *(.sbss .sbss.*)
     *(.bss .bss.*)
-  }
+    *(COMMON)
+    . = ALIGN(0x1000);
+  } :data
 
   PROVIDE(end = .);
 }

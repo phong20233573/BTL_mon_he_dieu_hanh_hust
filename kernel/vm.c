@@ -97,6 +97,31 @@ kvminithart()
 //   21..29 -- 9 bits of level-1 index.
 //   12..20 -- 9 bits of level-0 index.
 //    0..11 -- 12 bits of byte offset within the page.
+
+
+
+// Allocate a page for page-table structures.
+// If physical memory is exhausted, swap out one user page.
+static char *
+kalloc_pagetable_page(void)
+{
+  char *mem;
+
+  mem = kalloc();
+
+  if (mem == 0) {
+    if (swapout_one() == 0)
+      mem = kalloc();
+  }
+
+  return mem;
+}
+
+
+
+
+
+
 pte_t *
 walk(pagetable_t pagetable, uint64 va, int alloc)
 {
@@ -108,8 +133,9 @@ walk(pagetable_t pagetable, uint64 va, int alloc)
     if (*pte & PTE_V) {
       pagetable = (pagetable_t)PTE2PA(*pte);
     } else {
-      if (!alloc || (pagetable = (pde_t *)kalloc()) == 0)
-        return 0;
+     if (!alloc ||
+          (pagetable = (pagetable_t)kalloc_pagetable_page()) == 0)
+       return 0;
       memset(pagetable, 0, PGSIZE);
       *pte = PA2PTE(pagetable) | PTE_V;
     }
@@ -117,9 +143,10 @@ walk(pagetable_t pagetable, uint64 va, int alloc)
   return &pagetable[PX(0, va)];
 }
 
+
+
 // Look up a virtual address, return the physical address,
-// or 0 if not mapped.
-// Can only be used to look up user pages.
+// or 0 if not mapped.// Can only be used to look up user pages.
 uint64
 walkaddr(pagetable_t pagetable, uint64 va)
 {
@@ -168,8 +195,17 @@ mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
     if (*pte & PTE_V)
       panic("mappages: remap");
     *pte = PA2PTE(pa) | perm | PTE_V;
+
+    // Register user pages in Reverse Mapping.
+    if (perm & PTE_U) {
+     if (rmap_register(pa, pagetable, a) != 0) {
+      *pte = 0;
+      return -1;
+     }
+    }
+
     if (a == last)
-      break;
+     break;
     a += PGSIZE;
     pa += PGSIZE;
   }
@@ -192,6 +228,11 @@ uvmcreate()
 // Remove npages of mappings starting from va. va must be
 // page-aligned. It's OK if the mappings don't exist.
 // Optionally free the physical memory.
+
+
+// Remove npages of mappings starting from va.
+// va must be page-aligned.
+// Handles both physical pages and swapped pages.
 void
 uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
 {
@@ -202,17 +243,60 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
     panic("uvmunmap: not aligned");
 
   for (a = va; a < va + npages * PGSIZE; a += PGSIZE) {
-    if ((pte = walk(pagetable, a, 0)) == 0) // leaf page table entry allocated?
+    if ((pte = walk(pagetable, a, 0)) == 0)
       continue;
-    if ((*pte & PTE_V) == 0) // has physical page been allocated?
+
+    // Case 1: Page is stored on swap disk.
+    if (*pte & PTE_SWAP) {
+      uint slot = PTE_SWAP_SLOT(*pte);
+
+      // The PTE is the owner of this swap slot.
+      swap_free(slot);
+      *pte = 0;
       continue;
-    if (do_free) {
-      uint64 pa = PTE2PA(*pte);
-      kfree((void *)pa);
     }
+
+    // Case 2: Page is not mapped to physical memory.
+    if ((*pte & PTE_V) == 0)
+      continue;
+
+    uint64 pa = PTE2PA(*pte);
+
+    // If the page is kept after unmapping,
+    // remove it from the replacement candidates.
+    if (!do_free && (*pte & PTE_U))
+      rmap_pin(pa);
+
+    // Free physical memory when requested.
+    // kfree() also unregisters the frame from RMAP.
+    if (do_free)
+      kfree((void *)pa);
+
     *pte = 0;
   }
 }
+
+
+
+
+// Allocate a user page.
+// If physical memory is exhausted, swap out one page and retry.
+static char *
+kalloc_user_page(void)
+{
+  char *mem;
+
+  mem = kalloc();
+
+  if (mem == 0) {
+    if (swapout_one() == 0)
+      mem = kalloc();
+  }
+
+  return mem;
+}
+
+
 
 // Allocate PTEs and physical memory to grow a process from oldsz to
 // newsz, which need not be page aligned.  Returns new size or 0 on error.
@@ -227,7 +311,7 @@ uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz, int xperm)
 
   oldsz = PGROUNDUP(oldsz);
   for (a = oldsz; a < newsz; a += PGSIZE) {
-    mem = kalloc();
+    mem = kalloc_user_page();
     if (mem == 0) {
       uvmdealloc(pagetable, a, oldsz);
       return 0;
@@ -297,6 +381,10 @@ uvmfree(pagetable_t pagetable, uint64 sz)
 // physical memory.
 // returns 0 on success, -1 on failure.
 // frees any allocated pages on failure.
+
+
+
+
 int
 uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
 {
@@ -307,19 +395,32 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
 
   for (i = 0; i < sz; i += PGSIZE) {
     if ((pte = walk(old, i, 0)) == 0)
-      continue; // page table entry hasn't been allocated
+      continue;
+
+    // If the page is stored on swap, restore it first.
+    if (*pte & PTE_SWAP) {
+      if (vmfault(old, sz, i, 1) == 0)
+        goto err;
+    }
+
+    // Skip pages that have not been allocated.
     if ((*pte & PTE_V) == 0)
-      continue; // physical page hasn't been allocated
+      continue;
+
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
+
     if ((mem = kalloc()) == 0)
       goto err;
+
     memmove(mem, (char *)pa, PGSIZE);
+
     if (mappages(new, i, PGSIZE, (uint64)mem, flags) != 0) {
       kfree(mem);
       goto err;
     }
   }
+
   return 0;
 
 err:
@@ -327,8 +428,17 @@ err:
   return -1;
 }
 
+
+
+
+
+
 // mark a PTE invalid for user access.
 // used by exec for the user stack guard page.
+
+
+
+
 void
 uvmclear(pagetable_t pagetable, uint64 va)
 {
@@ -337,8 +447,17 @@ uvmclear(pagetable_t pagetable, uint64 va)
   pte = walk(pagetable, va, 0);
   if (pte == 0)
     panic("uvmclear");
+
+  // Pin the guard page so it cannot be selected for swapping.
+  if (*pte & PTE_V)
+    rmap_pin(PTE2PA(*pte));
+
+  // Remove user access permission.
   *pte &= ~PTE_U;
 }
+
+
+
 
 // Copy from kernel to user.
 // Copy len bytes from src to virtual address dstva in a given page table.
@@ -457,37 +576,168 @@ copyinstr(pagetable_t pagetable, uint64 psz, char *dst, uint64 srcva,
 // that was lazily allocated in sys_sbrk().
 // returns 0 if va is invalid or already mapped, or if
 // out of physical memory, and physical address if successful.
+
+
+
 uint64
 vmfault(pagetable_t pagetable, uint64 psz, uint64 va, int read)
 {
   uint64 mem;
+  pte_t *pte;
+  uint slot;
+  uint flags;
 
   if (va >= psz)
     return 0;
+
   va = PGROUNDDOWN(va);
-  if (ismapped(pagetable, va)) {
+
+  if (ismapped(pagetable, va))
     return 0;
+
+  pte = walk(pagetable, va, 0);
+
+  // Case 1: The page is stored on the swap disk.
+  if (pte != 0 && (*pte & PTE_SWAP)) {
+    slot = PTE_SWAP_SLOT(*pte);
+    flags = PTE_FLAGS(*pte);
+
+    // Do not restore pages without user permission.
+    if ((flags & PTE_U) == 0)
+      return 0;
+
+    // Allocate a physical page.
+    mem = (uint64)kalloc_user_page();
+    if (mem == 0)
+      return 0;
+
+    // Read the original page from swap storage.
+    swap_in(slot, (void *)mem);
+
+    // Register the restored page in Reverse Mapping.
+    if (rmap_register(mem, pagetable, va) != 0) {
+       kfree((void *)mem);
+       return 0;
+    }
+
+    // Restore the original PTE permissions.
+    flags &= ~(PTE_SWAP | PTE_V);
+    *pte = PA2PTE(mem) | flags | PTE_V;
+
+    // The page is now in RAM, so its swap slot can be released.
+    swap_free(slot);
+
+    // Record a successfully restored swap page fault.
+    swap_page_fault();
+
+    sfence_vma();
+    return mem;
   }
-  mem = (uint64)kalloc();
+
+  // Case 2: The page has not been allocated yet (lazy allocation).
+  mem = (uint64)kalloc_user_page();
   if (mem == 0)
     return 0;
+
   memset((void *)mem, 0, PGSIZE);
-  if (mappages(pagetable, va, PGSIZE, mem, PTE_W | PTE_U | PTE_R) != 0) {
+
+  if (mappages(pagetable, va, PGSIZE, mem,
+               PTE_W | PTE_U | PTE_R) != 0) {
     kfree((void *)mem);
     return 0;
   }
+
   return mem;
 }
 
+
+
+
+
+// Check whether a virtual address is mapped to physical memory.
 int
 ismapped(pagetable_t pagetable, uint64 va)
 {
   pte_t *pte = walk(pagetable, va, 0);
-  if (pte == 0) {
+
+  if (pte == 0)
     return 0;
-  }
-  if (*pte & PTE_V) {
+
+  if (*pte & PTE_V)
     return 1;
+
+  return 0;
+}
+
+
+
+
+
+
+
+// Swap out one user page using FIFO replacement.
+// Return 0 on success, -1 on failure.
+int
+swapout_one(void)
+{
+  uint64 pa;
+  uint64 va;
+  pagetable_t pt;
+  pte_t *pte;
+  uint slot;
+  uint flags;
+
+  // 1. Select and reserve the oldest eligible frame.
+  if (rmap_select_victim(&pa, &pt, &va) < 0)
+    return -1;
+
+  // 2. Find the corresponding page table entry.
+  pte = walk(pt, va, 0);
+
+  if (pte == 0 ||
+      (*pte & PTE_V) == 0 ||
+      (*pte & PTE_U) == 0 ||
+      PTE2PA(*pte) != pa) {
+    rmap_release_victim(pa);
+    return -1;
   }
+
+  // 3. Allocate a swap slot.
+  int allocated_slot = swap_alloc();
+
+  if (allocated_slot < 0) {
+    rmap_release_victim(pa);
+    return -1;
+  }
+
+  slot = (uint)allocated_slot;
+
+  // 4. Save the original page permissions.
+  flags = PTE_FLAGS(*pte);
+
+  // 5. Write the page to swap disk.
+  swap_out(slot, (void *)pa);
+
+  // 6. Verify that the mapping has not changed.
+  if ((*pte & PTE_V) == 0 ||
+      PTE2PA(*pte) != pa) {
+    swap_free(slot);
+    rmap_release_victim(pa);
+    return -1;
+  }
+
+  // 7. Replace the physical mapping with a swap entry.
+  *pte = PTE_MAKE_SWAP(slot, flags);
+
+  // 8. Flush the TLB.
+  sfence_vma();
+
+  // 9. Release the physical frame.
+  // kfree() also unregisters the frame from RMAP.
+  kfree((void *)pa);
+
+  printk("[SWAP OUT] VA=%p PA=%p SLOT=%d\n",
+         (void *)va, (void *)pa, slot);
+
   return 0;
 }

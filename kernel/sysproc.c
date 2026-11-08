@@ -6,7 +6,7 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "vm.h"
-
+#include "swap.h"
 uint64
 sys_exit(void)
 {
@@ -109,4 +109,38 @@ sys_uptime(void)
   xticks = ticks;
   release(&tickslock);
   return xticks;
+}
+
+// Set the page replacement policy.
+uint64
+sys_swap_policy(void)
+{
+  int policy;
+
+  argint(0, &policy);
+
+  return swap_set_policy(policy);
+}
+
+
+// Return actual Swap statistics to user space.
+uint64
+sys_swap_stats(void)
+{
+  uint64 user_addr;
+  struct proc *p = myproc();
+  struct swap_stat stats;
+
+  argaddr(0, &user_addr);
+
+  if (user_addr == 0)
+    return -1;
+
+  swap_get_stats(&stats);
+
+  if (copyout(p->pagetable, p->sz, user_addr,
+              (char *)&stats, sizeof(stats)) < 0)
+    return -1;
+
+  return 0;
 }
