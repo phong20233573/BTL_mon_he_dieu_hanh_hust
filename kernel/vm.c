@@ -163,7 +163,9 @@ walkaddr(pagetable_t pagetable, uint64 va)
 // Returns 0 on success, -1 if walk() couldn't
 // allocate a needed page-table page.
 int
-mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
+mappages(
+  pagetable_t pagetable, uint64 va, uint64 size, uint64 pa,
+  int perm) //pa có được khi khi gọi kalloc() trong uvmalloc() hoặc vmfault()
 {
   uint64 a, last;
   pte_t *pte;
@@ -193,7 +195,6 @@ mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
         return -1;
       }
     }
-
     if (a == last)
       break;
     a += PGSIZE;
@@ -222,6 +223,7 @@ uvmcreate()
 // Remove npages of mappings starting from va.
 // va must be page-aligned.
 // Handles both physical pages and swapped pages.
+
 void
 uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
 {
@@ -239,7 +241,7 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
     if (*pte & PTE_SWAP) {
       uint slot = PTE_SWAP_SLOT(*pte);
 
-      // The PTE is the owner of this swap slot.
+      // Release the swap slot.
       swap_free(slot);
       *pte = 0;
       continue;
@@ -251,12 +253,11 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
 
     uint64 pa = PTE2PA(*pte);
 
-    // If the page is kept after unmapping,
-    // remove it from the replacement candidates.
+    // If physical memory is kept, pin the frame
+    // so it cannot be selected for swapping.
     if (!do_free && (*pte & PTE_U))
       rmap_pin(pa);
 
-    // Free physical memory when requested.
     // kfree() also unregisters the frame from RMAP.
     if (do_free)
       kfree((void *)pa);
@@ -356,6 +357,12 @@ uvmfree(pagetable_t pagetable, uint64 sz)
 {
   if (sz > 0)
     uvmunmap(pagetable, 0, PGROUNDUP(sz) / PGSIZE, 1);
+
+  // All user mappings of this page table must be removed.
+  if (rmap_count_pt(pagetable) != 0) {
+    panic("uvmfree: rmap leak");
+  }
+
   freewalk(pagetable);
 }
 
@@ -418,14 +425,13 @@ uvmclear(pagetable_t pagetable, uint64 va)
   pte_t *pte;
 
   pte = walk(pagetable, va, 0);
+
   if (pte == 0)
     panic("uvmclear");
 
   // Pin the guard page so it cannot be selected for swapping.
   if (*pte & PTE_V)
     rmap_pin(PTE2PA(*pte));
-
-  // Remove user access permission.
   *pte &= ~PTE_U;
 }
 

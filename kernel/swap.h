@@ -20,5 +20,4 @@ struct swap_stat {
   uint64
     used_slots; // Số ô nhớ (4KB/ô) đang bị chiếm dụng trên đĩa virtio thứ 2
 };
-
 #endif // SWAP_H

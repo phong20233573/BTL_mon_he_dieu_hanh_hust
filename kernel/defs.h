@@ -63,6 +63,7 @@ void*           kalloc(void);
 void            kfree(void *);
 void            kinit(void);
 
+
 // RMAP - Reverse Mapping
 void            rmap_mark_allocated(uint64 pa);
 int             rmap_register(uint64 pa, pagetable_t pt, uint64 va);

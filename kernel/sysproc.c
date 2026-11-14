@@ -119,6 +119,11 @@ sys_swap_policy(void)
 
   argint(0, &policy);
 
+  // Kiểm tra miền giá trị hợp lệ:
+  // 0: FIFO, 1: CLOCK, 2: AGING_LRU, 3: WORKSET
+  if (policy < POLICY_FIFO || policy > POLICY_WORKSET)
+    return -1;
+
   return swap_set_policy(policy);
 }
 
@@ -132,13 +137,16 @@ sys_swap_stats(void)
 
   argaddr(0, &user_addr);
 
+  // Reject NULL pointer.
   if (user_addr == 0)
     return -1;
 
+  // Get real Swap statistics.
   swap_get_stats(&stats);
 
-  if (copyout(p->pagetable, p->sz, user_addr, (char *)&stats, sizeof(stats)) <
-      0)
+  // Copy statistics from Kernel to User space.
+  if (copyout(p->pagetable, p->sz, user_addr,
+              (char *)&stats, sizeof(stats)) < 0)
     return -1;
 
   return 0;

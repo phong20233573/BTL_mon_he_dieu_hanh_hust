@@ -223,17 +223,23 @@ rmap_pin(uint64 pa)
   release(&rmap_lock);
 } //rmap_pin(): frame vẫn đang được cấp phát nhưng không còn là User Page có thể swap.
 
+
 int
 rmap_select_victim(uint64 *pa, pagetable_t *pt, uint64 *va)
 {
   int victim_idx = -1;
   uint64 oldest = (uint64)-1;
 
+  if (pa == 0 || pt == 0 || va == 0)
+    return -1;
+
   acquire(&rmap_lock);
 
-  // Find the oldest eligible frame.
+  // Find the oldest eligible frame using FIFO.
   for (int i = 0; i < NFRAMES; i++) {
-    if (rmap[i].valid && rmap[i].pinned == 0 && rmap[i].busy == 0 &&
+    if (rmap[i].valid &&
+        rmap[i].pinned == 0 &&
+        rmap[i].busy == 0 &&
         rmap[i].pagetable != 0) {
 
       if (rmap[i].load_time < oldest) {
@@ -276,7 +282,6 @@ rmap_release_victim(uint64 pa)
 
   release(&rmap_lock);
 }
-
 int
 rmap_count_pt(pagetable_t pt)
 {
@@ -293,4 +298,4 @@ rmap_count_pt(pagetable_t pt)
   release(&rmap_lock);
 
   return count;
-} //rmap_count_pt: đếm số lượng frame vật lý đang được mapping bởi bảng trang pt. Duyệt qua mảng rmap, nếu entry hợp lệ và có bảng trang bằng pt, tăng biến đếm. Trả về số lượng frame được mapping bởi pt.
+}
