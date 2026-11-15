@@ -29,6 +29,8 @@ struct rmap_entry {
   uint64 va;   // địa chỉ ảo tương ứng với frame này trong tiến trình đó
   int
     pinned; // đánh dấu frame có được "ghim" (pinned) hay không, nghĩa là không thể bị thay thế
+  int
+    busy; // Frame đang được một CPU xử lý Swap-out, tạm thời không cho CPU khác chọn lại.
   uint64
     load_time; // thời điểm frame được nạp vào bộ nhớ, dùng để hỗ trợ thuật toán thay thế trang FIFO
   int
@@ -67,6 +69,7 @@ rmap_mark_allocated(uint64 pa)
   rmap[idx].pagetable = 0;
   rmap[idx].va = 0;
   rmap[idx].pinned = 1;
+  rmap[idx].busy = 0;
   rmap[idx].load_time = 0;
   rmap[idx].valid = 1;
 
@@ -167,6 +170,7 @@ rmap_register(uint64 pa, pagetable_t pt, uint64 va)
   e->pagetable = pt;
   e->va = va;
   e->pinned = 0;
+  e->busy = 0;
   e->load_time = ++rmap_clock;
   e->valid = 1;
 
@@ -192,6 +196,7 @@ rmap_unregister(uint64 pa)
   rmap[idx].pagetable = 0;
   rmap[idx].va = 0;
   rmap[idx].pinned = 0;
+  rmap[idx].busy = 0;
   rmap[idx].load_time = 0;
   rmap[idx].valid = 0;
 
@@ -211,33 +216,69 @@ rmap_pin(uint64 pa)
     rmap[idx].pagetable = 0;
     rmap[idx].va = 0;
     rmap[idx].pinned = 1;
+    rmap[idx].busy = 0;
     rmap[idx].load_time = 0;
   }
 
   release(&rmap_lock);
 } //rmap_pin(): frame vẫn đang được cấp phát nhưng không còn là User Page có thể swap.
-uint64
-select_victim_frame(void)
+
+int
+rmap_select_victim(uint64 *pa, pagetable_t *pt, uint64 *va)
 {
-  uint64 victim = 0;
+  int victim_idx = -1;
   uint64 oldest = (uint64)-1;
+
+  if (pa == 0 || pt == 0 || va == 0)
+    return -1;
 
   acquire(&rmap_lock);
 
+  // Find the oldest eligible frame using FIFO.
   for (int i = 0; i < NFRAMES; i++) {
-    if (rmap[i].valid && rmap[i].pinned == 0 && rmap[i].pagetable != 0) {
+    if (rmap[i].valid && rmap[i].pinned == 0 && rmap[i].busy == 0 &&
+        rmap[i].pagetable != 0) {
 
       if (rmap[i].load_time < oldest) {
         oldest = rmap[i].load_time;
-        victim = KERNBASE + (uint64)i * PGSIZE;
+        victim_idx = i;
       }
     }
   }
 
+  if (victim_idx < 0) {
+    release(&rmap_lock);
+    return -1;
+  }
+
+  // Reserve the selected frame.
+  rmap[victim_idx].busy = 1;
+
+  // Return physical and virtual mapping information.
+  *pa = KERNBASE + (uint64)victim_idx * PGSIZE;
+  *pt = rmap[victim_idx].pagetable;
+  *va = rmap[victim_idx].va;
+
   release(&rmap_lock);
 
-  return victim;
-} //select_victim_frame: chọn một frame vật lý để thay thế theo thuật toán FIFO. Duyệt qua mảng rmap, tìm frame hợp lệ, không bị pinned và có bảng trang. Chọn frame có load_time nhỏ nhất (cũ nhất) làm nạn nhân. Trả về địa chỉ vật lý của frame nạn nhân, hoặc 0 nếu không tìm thấy.
+  return 0;
+}
+
+void
+rmap_release_victim(uint64 pa)
+{
+  int idx = rmap_index(pa);
+
+  if (idx < 0)
+    return;
+
+  acquire(&rmap_lock);
+
+  if (rmap[idx].valid)
+    rmap[idx].busy = 0;
+
+  release(&rmap_lock);
+}
 int
 rmap_count_pt(pagetable_t pt)
 {
@@ -254,4 +295,4 @@ rmap_count_pt(pagetable_t pt)
   release(&rmap_lock);
 
   return count;
-} //rmap_count_pt: đếm số lượng frame vật lý đang được mapping bởi bảng trang pt. Duyệt qua mảng rmap, nếu entry hợp lệ và có bảng trang bằng pt, tăng biến đếm. Trả về số lượng frame được mapping bởi pt.
+}
