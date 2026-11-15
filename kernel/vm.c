@@ -212,21 +212,18 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
       continue;
     uint64 pa = PTE2PA(*pte);
 
-// Remove mapping metadata.
-if (*pte & PTE_U) {
-    if (do_free) {
-        rmap_unregister(pa);
-    } else {
-        rmap_pin(pa);
+
+    // Remove mapping metadata.
+    if ((*pte & PTE_U) && !do_free) {
+      rmap_pin(pa);
     }
-}
 
-if (do_free) {
-    kfree((void *)pa);
-}
+    if (do_free) {
+      kfree((void *)pa);
+    }
 
-*pte = 0;
     *pte = 0;
+
   }
 }
 
