@@ -223,7 +223,6 @@ rmap_pin(uint64 pa)
   release(&rmap_lock);
 } //rmap_pin(): frame vẫn đang được cấp phát nhưng không còn là User Page có thể swap.
 
-
 int
 rmap_select_victim(uint64 *pa, pagetable_t *pt, uint64 *va)
 {
@@ -237,9 +236,7 @@ rmap_select_victim(uint64 *pa, pagetable_t *pt, uint64 *va)
 
   // Find the oldest eligible frame using FIFO.
   for (int i = 0; i < NFRAMES; i++) {
-    if (rmap[i].valid &&
-        rmap[i].pinned == 0 &&
-        rmap[i].busy == 0 &&
+    if (rmap[i].valid && rmap[i].pinned == 0 && rmap[i].busy == 0 &&
         rmap[i].pagetable != 0) {
 
       if (rmap[i].load_time < oldest) {
