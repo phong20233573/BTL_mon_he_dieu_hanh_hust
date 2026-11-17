@@ -21,4 +21,10 @@ struct swap_stat {
     used_slots; // Số ô nhớ (4KB/ô) đang bị chiếm dụng trên đĩa virtio thứ 2
 };
 
+void swap_set_policy(int policy);
+int swap_get_policy(void);
+void swap_reset_counters(void);
+void swap_record_page_fault(void);
+void swap_get_stats(struct swap_stat *st);
+
 #endif // SWAP_H

@@ -63,6 +63,7 @@ void            kinit(void);
 // Reverse Mapping (RMAP)
 void rmap_mark_allocated(uint64 pa);
 int rmap_register(uint64 pa, pagetable_t pt, uint64 va);
+int rmap_lookup(uint64 pa, pagetable_t *pt, uint64 *va);
 void rmap_pin(uint64 pa);
 void rmap_unregister(uint64 pa);
 
@@ -178,6 +179,7 @@ int             copyin(pagetable_t, uint64, char *, uint64, uint64);
 int             copyinstr(pagetable_t, uint64, char *, uint64, uint64);
 int             ismapped(pagetable_t, uint64);
 uint64          vmfault(pagetable_t, uint64, uint64, int);
+int             swap_evict_one(void);
 
 // plic.c
 void            plicinit(void);
@@ -197,5 +199,8 @@ int             swap_alloc(void);
 void            swap_free(uint);
 void            swap_out(uint, void *);
 void            swap_in(uint, void *);
+int             swap_page_record(uint, pagetable_t, uint64);
+int             swap_page_matches(uint, pagetable_t, uint64);
+void            swap_page_remove(uint);
 // number of elements in fixed-size array
 #define NELEM(x) (sizeof(x) / sizeof((x)[0]))

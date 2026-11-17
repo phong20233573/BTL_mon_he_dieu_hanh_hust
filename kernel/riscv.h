@@ -397,6 +397,10 @@ typedef uint64 *pagetable_t; // 512 PTEs
 #define PTE_W (1L << 2)
 #define PTE_X (1L << 3)
 #define PTE_U (1L << 4) // user can access
+#define PTE_SWAP (1L << 8) // invalid PTE contains a swap slot
+#define PTE_SWAP_SLOT(pte) ((uint)((pte) >> 10))
+#define PTE_MAKE_SWAP(slot, flags) \
+  (((uint64)(slot) << 10) | ((flags) & (PTE_R | PTE_W | PTE_X | PTE_U)) | PTE_SWAP)
 
 // shift a physical address to the right place for a PTE.
 #define PA2PTE(pa) ((((uint64)pa) >> 12) << 10)

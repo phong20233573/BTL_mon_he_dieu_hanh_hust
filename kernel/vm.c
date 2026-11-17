@@ -7,11 +7,22 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "fs.h"
+#include "swap.h"
 
 /*
  * the kernel's page table.
  */
 pagetable_t kernel_pagetable;
+
+static char *
+user_kalloc(void)
+{
+  char *mem = kalloc();
+
+  if (mem == 0 && swap_evict_one() == 0)
+    mem = kalloc();
+  return mem;
+}
 
 extern char etext[]; // kernel.ld sets this to end of kernel code.
 
@@ -214,6 +225,15 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
   for (a = va; a < va + npages * PGSIZE; a += PGSIZE) {
     if ((pte = walk(pagetable, a, 0)) == 0) // leaf page table entry allocated?
       continue;
+    if (*pte & PTE_SWAP) {
+      uint slot = PTE_SWAP_SLOT(*pte);
+      if (do_free) {
+        swap_page_remove(slot);
+        swap_free(slot);
+      }
+      *pte = 0;
+      continue;
+    }
     if ((*pte & PTE_V) == 0) // has physical page been allocated?
       continue;
     uint64 pa = PTE2PA(*pte);
@@ -242,6 +262,7 @@ uint64
 uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz, int xperm)
 {
   char *mem;
+  pte_t *pte;
   uint64 a;
 
   if (newsz < oldsz)
@@ -249,7 +270,14 @@ uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz, int xperm)
 
   oldsz = PGROUNDUP(oldsz);
   for (a = oldsz; a < newsz; a += PGSIZE) {
-    mem = kalloc();
+    pte = walk(pagetable, a, 1);
+    if (pte == 0 && swap_evict_one() == 0)
+      pte = walk(pagetable, a, 1);
+    if (pte == 0) {
+      uvmdealloc(pagetable, a, oldsz);
+      return 0;
+    }
+    mem = user_kalloc();
     if (mem == 0) {
       uvmdealloc(pagetable, a, oldsz);
       return 0;
@@ -336,11 +364,16 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   for (i = 0; i < sz; i += PGSIZE) {
     if ((pte = walk(old, i, 0)) == 0)
       continue; // page table entry hasn't been allocated
+    if (*pte & PTE_SWAP) {
+      if (vmfault(old, sz, i, 1) == 0)
+        goto err;
+      pte = walk(old, i, 0);
+    }
     if ((*pte & PTE_V) == 0)
       continue; // physical page hasn't been allocated
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
-    if ((mem = kalloc()) == 0)
+    if ((mem = user_kalloc()) == 0)
       goto err;
     memmove(mem, (char *)pa, PGSIZE);
     if (mappages(new, i, PGSIZE, (uint64)mem, flags) != 0) {
@@ -487,6 +520,40 @@ copyinstr(pagetable_t pagetable, uint64 psz, char *dst, uint64 srcva,
   }
 }
 
+int
+swap_evict_one(void)
+{
+  uint64 pa, va;
+  pagetable_t pagetable;
+  pte_t *pte;
+  uint flags;
+  int slot;
+
+  pa = select_victim_frame();
+  if (pa == 0 || rmap_lookup(pa, &pagetable, &va) < 0) {
+    return -1;
+  }
+
+  pte = walk(pagetable, va, 0);
+  if (pte == 0 || (*pte & PTE_V) == 0 || PTE2PA(*pte) != pa) {
+    return -1;
+  }
+
+  slot = swap_alloc();
+  if (slot < 0) {
+    return -1;
+  }
+
+  flags = PTE_FLAGS(*pte) & (PTE_R | PTE_W | PTE_X | PTE_U);
+  swap_out((uint)slot, (void *)pa);
+  *pte = PTE_MAKE_SWAP((uint)slot, flags);
+  sfence_vma();
+  if (swap_page_record((uint)slot, pagetable, va) < 0)
+    panic("swap_evict_one: metadata");
+  kfree((void *)pa);
+  return 0;
+}
+
 // allocate and map user memory if process is referencing a page
 // that was lazily allocated in sys_sbrk().
 // returns 0 if va is invalid or already mapped, or if
@@ -494,15 +561,49 @@ copyinstr(pagetable_t pagetable, uint64 psz, char *dst, uint64 srcva,
 uint64
 vmfault(pagetable_t pagetable, uint64 psz, uint64 va, int read)
 {
+  pte_t *pte;
   uint64 mem;
+  uint flags;
+  uint slot;
 
   if (va >= psz)
     return 0;
   va = PGROUNDDOWN(va);
-  if (ismapped(pagetable, va)) {
+  pte = walk(pagetable, va, 0);
+  if (pte != 0 && (*pte & PTE_SWAP)) {
+    slot = PTE_SWAP_SLOT(*pte);
+    if (!swap_page_matches(slot, pagetable, va))
+      return 0;
+
+    flags = PTE_FLAGS(*pte) & (PTE_R | PTE_W | PTE_X | PTE_U);
+    mem = (uint64)user_kalloc();
+    if (mem == 0)
+      return 0;
+
+    swap_in(slot, (void *)mem);
+    *pte = PA2PTE(mem) | flags | PTE_V;
+    if (rmap_register(mem, pagetable, va) < 0) {
+      *pte = PTE_MAKE_SWAP(slot, flags);
+      kfree((void *)mem);
+      return 0;
+    }
+    swap_page_remove(slot);
+    swap_free(slot);
+    swap_record_page_fault();
+    sfence_vma();
+    return mem;
+  }
+  if (pte == 0) {
+    pte = walk(pagetable, va, 1);
+    if (pte == 0 && swap_evict_one() == 0)
+      pte = walk(pagetable, va, 1);
+    if (pte == 0)
+      return 0;
+  }
+  if (*pte & PTE_V) {
     return 0;
   }
-  mem = (uint64)kalloc();
+  mem = (uint64)user_kalloc();
   if (mem == 0)
     return 0;
   memset((void *)mem, 0, PGSIZE);

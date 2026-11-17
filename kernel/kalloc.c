@@ -174,6 +174,25 @@ rmap_register(uint64 pa, pagetable_t pt, uint64 va)
   printk("[RMAP+] PA=%p PT=%p VA=%p\n", (void *)pa, (void *)pt, (void *)va);
   return 0;
 } //rmap_register: đăng ký mapping từ frame vật lý pa sang bảng trang pt và địa chỉ ảo va. Nếu frame đã được mapping, chỉ cho phép đăng ký lại với cùng bảng trang và địa chỉ ảo. Trả về 0 nếu thành công, -1 nếu thất bại.
+
+int
+rmap_lookup(uint64 pa, pagetable_t *pt, uint64 *va)
+{
+  int idx = rmap_index(pa);
+
+  if (idx < 0 || pt == 0 || va == 0)
+    return -1;
+
+  acquire(&rmap_lock);
+  if (!rmap[idx].valid || rmap[idx].pinned || rmap[idx].pagetable == 0) {
+    release(&rmap_lock);
+    return -1;
+  }
+  *pt = rmap[idx].pagetable;
+  *va = rmap[idx].va;
+  release(&rmap_lock);
+  return 0;
+}
 //ví dụ: rmap_register(0x80002000, PT_A, 0x1000); thì rmap[2]{ pagetable = PT_A,
 //va        = 0x1000,
 //pinned    = 0,

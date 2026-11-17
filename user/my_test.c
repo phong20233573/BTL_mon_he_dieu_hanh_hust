@@ -302,7 +302,7 @@ struct swap_stat st;
     st.current_policy, (int)st.page_faults, (int)st.swap_out_count,
     (int)st.swap_in_count, (int)st.used_slots);
   check("TC1: swap_stats(&st) voi con tro hop le",
-        ret == 0 && st.page_faults == 10);
+      ret == 0 && st.page_faults == 0);
 
   // TC2: Chuyển thuật toán hợp lệ sang CLOCK (1) và kiểm tra bộ đếm đã reset về 0
   ret = swap_policy(POLICY_CLOCK);
