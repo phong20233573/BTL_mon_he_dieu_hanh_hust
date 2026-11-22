@@ -155,9 +155,16 @@ kerneltrap()
     panic("kerneltrap");
   }
 
-  // give up the CPU if this is a timer interrupt.
-  if (which_dev == 2 && myproc() != 0)
-    yield();
+  // Give up the CPU if this is a timer interrupt.
+  // A process reserved for swap-out (vm_busy, not waiting for disk)
+  // must keep running: the scheduler will not select it, so yielding
+  // here deadlocks when this is the only runnable CPU.
+  if (which_dev == 2 && myproc() != 0) {
+    struct proc *p = myproc();
+
+    if (!p->vm_busy || p->vm_io_wait)
+      yield();
+  }
 
   // the yield() may have caused some traps to occur,
   // so restore trap registers for use by kernelvec.S's sepc instruction.

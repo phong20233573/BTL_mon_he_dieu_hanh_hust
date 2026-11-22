@@ -30,6 +30,11 @@
 #define VIRTIO_MMIO_DRIVER_DESC_HIGH	0x094
 #define VIRTIO_MMIO_DEVICE_DESC_LOW	0x0a0 // physical address for used ring, write-only
 #define VIRTIO_MMIO_DEVICE_DESC_HIGH	0x0a4
+#define VIRTIO_MMIO_CONFIG_GENERATION 0x0fc
+#define VIRTIO_MMIO_CONFIG            0x100
+
+// VirtIO Block device configuration offsets.
+#define VIRTIO_BLK_CONFIG_CAPACITY    0x00
 // clang-format on
 
 // status register bits, from qemu virtio_config.h

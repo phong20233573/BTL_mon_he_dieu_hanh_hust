@@ -13,15 +13,20 @@
 #include "buf.h"
 #include "virtio.h"
 
-#define NDISK            2
-#define SECTOR_SIZE      512
-#define SECTORS_PER_PAGE (PGSIZE / SECTOR_SIZE)
+#define NDISK                 2
+#define SECTOR_SIZE           512
+#define SECTORS_PER_PAGE      (PGSIZE / SECTOR_SIZE)
+#define SWAP_DISK_SIZE_BYTES  (64ULL * 1024 * 1024)
+#define SWAP_SLOT_COUNT       (SWAP_DISK_SIZE_BYTES / PGSIZE)
 
 // Access MMIO registers of a specific device.
 #define R(d, r) ((volatile uint32 *)((d)->mmio + (r)))
 
+
+
 struct disk {
   uint64 mmio;
+  uint64 capacity_sectors;
 
   struct virtq_desc *desc;
   struct virtq_avail *avail;
@@ -40,6 +45,30 @@ struct disk {
 
   struct spinlock vdisk_lock;
 };
+
+// Read the 64-bit capacity from VirtIO Block configuration.
+// Capacity is expressed in 512-byte sectors.
+static uint64
+virtio_read_capacity(struct disk *d)
+{
+  uint32 generation;
+  uint32 generation_after;
+  uint32 low;
+  uint32 high;
+
+  do {
+    generation = *R(d, VIRTIO_MMIO_CONFIG_GENERATION);
+
+    low = *R(d, VIRTIO_MMIO_CONFIG +
+                VIRTIO_BLK_CONFIG_CAPACITY);
+    high = *R(d, VIRTIO_MMIO_CONFIG +
+                 VIRTIO_BLK_CONFIG_CAPACITY + 4);
+
+    generation_after = *R(d, VIRTIO_MMIO_CONFIG_GENERATION);
+  } while (generation != generation_after);
+
+  return ((uint64)high << 32) | low;
+}
 
 static struct disk disks[NDISK];
 
@@ -87,10 +116,20 @@ virtio_disk_init_one(struct disk *d, uint64 mmio, char *name)
   status |= VIRTIO_CONFIG_S_FEATURES_OK;
   *R(d, VIRTIO_MMIO_STATUS) = status;
 
+  //Verify that the device accepted our negotiated features.
   status = *R(d, VIRTIO_MMIO_STATUS);
 
   if (!(status & VIRTIO_CONFIG_S_FEATURES_OK))
     panic("virtio FEATURES_OK unset");
+
+  // Read actual device capacity.
+  d->capacity_sectors = virtio_read_capacity(d);
+
+  if (d->capacity_sectors == 0)
+    panic("virtio disk has zero capacity");
+
+  printk("VirtIO capacity: %d sectors\n",
+       (int)d->capacity_sectors);
 
   // Initialize queue 0.
   *R(d, VIRTIO_MMIO_QUEUE_SEL) = 0;
@@ -147,6 +186,10 @@ virtio_disk_init(void)
 {
   virtio_disk_init_one(&disks[0], VIRTIO0, "virtio_disk0");
   virtio_disk_init_one(&disks[1], VIRTIO1, "virtio_disk1");
+
+  if (disks[1].capacity_sectors <
+      SWAP_SLOT_COUNT * SECTORS_PER_PAGE)
+    panic("swap disk capacity too small");
 
   printk("VirtIO disk 0 initialized: fs.img\n");
   printk("VirtIO disk 1 initialized: swap.img\n");
@@ -225,6 +268,17 @@ alloc3_desc(struct disk *d, int *idx)
 static void
 virtio_rw(struct disk *d, void *data, uint len, uint64 sector, int write)
 {
+  uint64 sectors;
+
+  if (data == 0 || len == 0 || len % SECTOR_SIZE != 0)
+    panic("virtio_rw: invalid buffer or length");
+
+  sectors = len / SECTOR_SIZE;
+
+  if (sector > d->capacity_sectors ||
+      sectors > d->capacity_sectors - sector)
+    panic("virtio_rw: request out of range");
+
   volatile int done = 0;
 
   acquire(&d->vdisk_lock);
@@ -233,10 +287,15 @@ virtio_rw(struct disk *d, void *data, uint len, uint64 sector, int write)
   int idx[3];
 
   while (alloc3_desc(d, idx) < 0) {
+    proc_vm_io_wait(1);
+
     sleep_prepare(&d->free[0]);
     release(&d->vdisk_lock);
+
     sleep();
+
     acquire(&d->vdisk_lock);
+    proc_vm_io_wait(0);
   }
 
   // Descriptor 0: request header.
@@ -287,10 +346,15 @@ virtio_rw(struct disk *d, void *data, uint len, uint64 sector, int write)
 
   // Wait for completion.
   while (!done) {
+    proc_vm_io_wait(1);
+
     sleep_prepare((void *)&done);
     release(&d->vdisk_lock);
+
     sleep();
+
     acquire(&d->vdisk_lock);
+    proc_vm_io_wait(0);
   }
 
   if (d->info[idx[0]].status != 0)
@@ -323,7 +387,26 @@ virtio_disk_rw(struct buf *b, int write)
 void
 virtio_swap_rw(void *data, uint slot, int write)
 {
-  uint64 sector = (uint64)slot * SECTORS_PER_PAGE;
+  uint64 sector;
+  uint64 capacity_sectors;
+
+  // Validate arguments.
+  if (data == 0)
+    panic("virtio_swap_rw: null buffer");
+
+  if (slot >= SWAP_SLOT_COUNT)
+    panic("virtio_swap_rw: invalid slot");
+
+  if (write != 0 && write != 1)
+    panic("virtio_swap_rw: invalid operation");
+
+  // Calculate the sector range occupied by this page.
+  sector = (uint64)slot * SECTORS_PER_PAGE;
+  capacity_sectors = SWAP_DISK_SIZE_BYTES / SECTOR_SIZE;
+
+  if (sector > capacity_sectors ||
+      SECTORS_PER_PAGE > capacity_sectors - sector)
+    panic("virtio_swap_rw: request out of range");
 
   virtio_rw(&disks[1], data, PGSIZE, sector, write);
 }
@@ -347,7 +430,11 @@ virtio_disk_intr(int dev)
   while (d->used_idx != d->used->idx) {
     io_fence();
 
-    int id = d->used->ring[d->used_idx % NUM].id;
+    uint32 id = d->used->ring[d->used_idx % NUM].id;
+
+    // Validate the descriptor ID before accessing info[].
+    if (id >= NUM)
+      panic("virtio interrupt: invalid descriptor id");
 
     if (d->info[id].status != 0)
       panic("virtio interrupt status");

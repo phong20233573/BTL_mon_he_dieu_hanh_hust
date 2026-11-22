@@ -66,6 +66,12 @@ rmap_mark_allocated(uint64 pa)
 
   acquire(&rmap_lock);
 
+  // A frame removed from the freelist must not still be registered.
+  if (rmap[idx].valid || rmap[idx].busy) {
+    release(&rmap_lock);
+    panic("rmap_mark_allocated: frame state");
+  }
+
   rmap[idx].pagetable = 0;
   rmap[idx].va = 0;
   rmap[idx].pinned = 1;
@@ -90,24 +96,54 @@ freerange(void *pa_start, void *pa_end)
 {
   char *p;
   p = (char *)PGROUNDUP((uint64)pa_start);
-  for (; p + PGSIZE <= (char *)pa_end; p += PGSIZE)
-    kfree(p);
+  for (; p + PGSIZE <= (char *)pa_end; p += PGSIZE) {
+    struct run *r;
+
+    memset(p, 1, PGSIZE);
+    r = (struct run *)p;
+    r->next = kmem.freelist;
+    kmem.freelist = r;
+  }
 }
 
-// Free the page of physical memory pointed at by pa,
-// which normally should have been returned by a
-// call to kalloc().  (The exception is when
-// initializing the allocator; see kinit above.)
+// Free a page returned by kalloc().
 void
 kfree(void *pa)
 {
   struct run *r;
 
-  if (((uint64)pa % PGSIZE) != 0 || (char *)pa < end || (uint64)pa >= PHYSTOP)
+  if (((uint64)pa % PGSIZE) != 0 || (char *)pa < end ||
+      (uint64)pa >= PHYSTOP)
     panic("kfree");
 
-  // Remove frame metadata before returning it to free list.
-  rmap_unregister((uint64)pa);
+  // Never free a frame reserved by an in-progress swap-out.
+  if (rmap_unregister((uint64)pa) != 0)
+    panic("kfree: invalid frame state");
+
+  memset(pa, 1, PGSIZE);
+
+  r = (struct run *)pa;
+
+  acquire(&kmem.lock);
+  r->next = kmem.freelist;
+  kmem.freelist = r;
+  release(&kmem.lock);
+}
+
+// Free a victim frame after its page has been committed to swap.
+// RMAP reservation is consumed atomically before the frame enters
+// the allocator's free list.
+void
+kfree_victim(void *pa)
+{
+  struct run *r;
+
+  if (((uint64)pa % PGSIZE) != 0 || (char *)pa < end ||
+      (uint64)pa >= PHYSTOP)
+    panic("kfree_victim");
+
+  if (rmap_unregister_victim((uint64)pa) != 0)
+    panic("kfree_victim: invalid victim");
 
   memset(pa, 1, PGSIZE);
 
@@ -155,6 +191,17 @@ rmap_register(uint64 pa, pagetable_t pt, uint64 va)
   struct rmap_entry *e =
     &rmap[idx]; //lấy con trỏ đến entry trong mảng rmap tương ứng với frame
 
+  if (!e->valid) {
+    release(&rmap_lock);
+    return -1;
+  }
+
+  // A frame reserved for swap-out cannot be registered again.
+  if (e->busy) {
+    release(&rmap_lock);
+    return -1;
+  }
+
   // Already mapped: allow an identical registration,
   // but reject a different mapping for the same frame.
   if (e->valid && e->pagetable != 0) {
@@ -175,7 +222,6 @@ rmap_register(uint64 pa, pagetable_t pt, uint64 va)
   e->valid = 1;
 
   release(&rmap_lock);
-  printk("[RMAP+] PA=%p PT=%p VA=%p\n", (void *)pa, (void *)pt, (void *)va);
   return 0;
 } //rmap_register: đăng ký mapping từ frame vật lý pa sang bảng trang pt và địa chỉ ảo va. Nếu frame đã được mapping, chỉ cho phép đăng ký lại với cùng bảng trang và địa chỉ ảo. Trả về 0 nếu thành công, -1 nếu thất bại.
 //ví dụ: rmap_register(0x80002000, PT_A, 0x1000); thì rmap[2]{ pagetable = PT_A,
@@ -183,15 +229,47 @@ rmap_register(uint64 pa, pagetable_t pt, uint64 va)
 //pinned    = 0,
 //load_time = 1,
 //valid     = 1}
-void
+int
 rmap_unregister(uint64 pa)
 {
   int idx = rmap_index(pa);
 
   if (idx < 0)
-    return;
+    return -1;
 
   acquire(&rmap_lock);
+
+  if (!rmap[idx].valid || rmap[idx].busy) {
+    release(&rmap_lock);
+    return -1;
+  }
+
+  rmap[idx].pagetable = 0;
+  rmap[idx].va = 0;
+  rmap[idx].pinned = 0;
+  rmap[idx].load_time = 0;
+  rmap[idx].valid = 0;
+
+  release(&rmap_lock);
+  return 0;
+}
+
+// Remove metadata only when this frame is still reserved as a victim.
+int
+rmap_unregister_victim(uint64 pa)
+{
+  int idx = rmap_index(pa);
+
+  if (idx < 0)
+    return -1;
+
+  acquire(&rmap_lock);
+
+  if (!rmap[idx].valid || !rmap[idx].busy ||
+      rmap[idx].pagetable == 0) {
+    release(&rmap_lock);
+    return -1;
+  }
 
   rmap[idx].pagetable = 0;
   rmap[idx].va = 0;
@@ -201,7 +279,9 @@ rmap_unregister(uint64 pa)
   rmap[idx].valid = 0;
 
   release(&rmap_lock);
-} //rmap_unregister: hủy đăng ký mapping của frame vật lý pa. Thiết lập các trường trong entry tương ứng trong mảng rmap về giá trị mặc định.
+  return 0;
+}
+
 void
 rmap_pin(uint64 pa)
 {
@@ -212,40 +292,59 @@ rmap_pin(uint64 pa)
 
   acquire(&rmap_lock);
 
-  if (rmap[idx].valid) {
-    rmap[idx].pagetable = 0;
-    rmap[idx].va = 0;
-    rmap[idx].pinned = 1;
-    rmap[idx].busy = 0;
-    rmap[idx].load_time = 0;
+  if (!rmap[idx].valid || rmap[idx].busy) {
+    release(&rmap_lock);
+    panic("rmap_pin: invalid frame");
   }
 
-  release(&rmap_lock);
-} //rmap_pin(): frame vẫn đang được cấp phát nhưng không còn là User Page có thể swap.
+  rmap[idx].pagetable = 0;
+  rmap[idx].va = 0;
+  rmap[idx].pinned = 1;
+  rmap[idx].load_time = 0;
 
+  release(&rmap_lock);
+}
 
 int
-rmap_select_victim(uint64 *pa, pagetable_t *pt, uint64 *va)
+rmap_select_victim_after(uint64 *pa, pagetable_t *pt, uint64 *va,
+                         uint64 *sequence, uint64 after,
+                         pagetable_t skip_pt)
 {
   int victim_idx = -1;
   uint64 oldest = (uint64)-1;
 
-  if (pa == 0 || pt == 0 || va == 0)
+  if (pa == 0 || pt == 0 || va == 0 || sequence == 0)
     return -1;
 
   acquire(&rmap_lock);
 
-  // Find the oldest eligible frame using FIFO.
   for (int i = 0; i < NFRAMES; i++) {
-    if (rmap[i].valid &&
-        rmap[i].pinned == 0 &&
-        rmap[i].busy == 0 &&
-        rmap[i].pagetable != 0) {
+    if (!rmap[i].valid)
+      continue;
 
-      if (rmap[i].load_time < oldest) {
-        oldest = rmap[i].load_time;
-        victim_idx = i;
-      }
+    if (rmap[i].pinned) {
+      continue;
+    }
+
+    if (rmap[i].busy) {
+      continue;
+    }
+
+    if (rmap[i].pagetable == 0) {
+      continue;
+    }
+
+    if (rmap[i].pagetable == skip_pt) {
+      continue;
+    }
+
+    if (rmap[i].load_time <= after) {
+      continue;
+    }
+
+    if (rmap[i].load_time < oldest) {
+      oldest = rmap[i].load_time;
+      victim_idx = i;
     }
   }
 
@@ -254,33 +353,57 @@ rmap_select_victim(uint64 *pa, pagetable_t *pt, uint64 *va)
     return -1;
   }
 
-  // Reserve the selected frame.
-  rmap[victim_idx].busy = 1;
-
-  // Return physical and virtual mapping information.
   *pa = KERNBASE + (uint64)victim_idx * PGSIZE;
   *pt = rmap[victim_idx].pagetable;
   *va = rmap[victim_idx].va;
+  *sequence = rmap[victim_idx].load_time;
 
   release(&rmap_lock);
-
   return 0;
 }
 
-void
+int
+rmap_reserve_victim(uint64 pa, pagetable_t pt, uint64 va, uint64 sequence)
+{
+  int idx = rmap_index(pa);
+
+  if (idx < 0 || pt == 0 || va % PGSIZE != 0)
+    return -1;
+
+  acquire(&rmap_lock);
+
+  if (!rmap[idx].valid || rmap[idx].pinned || rmap[idx].busy ||
+      rmap[idx].pagetable != pt || rmap[idx].va != va ||
+      rmap[idx].load_time != sequence) {
+    release(&rmap_lock);
+    return -1;
+  }
+
+  rmap[idx].busy = 1;
+  release(&rmap_lock);
+  return 0;
+}
+
+int
 rmap_release_victim(uint64 pa)
 {
   int idx = rmap_index(pa);
 
   if (idx < 0)
-    return;
+    return -1;
 
   acquire(&rmap_lock);
 
-  if (rmap[idx].valid)
-    rmap[idx].busy = 0;
+  if (!rmap[idx].valid || !rmap[idx].busy ||
+      rmap[idx].pagetable == 0) {
+    release(&rmap_lock);
+    return -1;
+  }
+
+  rmap[idx].busy = 0;
 
   release(&rmap_lock);
+  return 0;
 }
 int
 rmap_count_pt(pagetable_t pt)

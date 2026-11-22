@@ -151,3 +151,10 @@ sys_swap_stats(void)
 
   return 0;
 }
+
+uint64
+sys_swap_dump(void)
+{
+  swap_dump_owners();
+  return 0;
+}

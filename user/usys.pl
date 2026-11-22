@@ -45,3 +45,4 @@ entry("uptime");
 entry("sync");
 entry("swap_policy");
 entry("swap_stats");
+entry("swap_dump");

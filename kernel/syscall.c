@@ -105,6 +105,7 @@ extern uint64 sys_close(void);
 extern uint64 sys_sync(void);
 extern uint64 sys_swap_policy(void);
 extern uint64 sys_swap_stats(void);
+extern uint64 sys_swap_dump(void);
 // An array mapping syscall numbers from syscall.h
 // to the function that handles the system call.
 static uint64 (*syscalls[])(void) = {
@@ -133,6 +134,7 @@ static uint64 (*syscalls[])(void) = {
   [SYS_sync]    = sys_sync,
   [SYS_swap_policy] = sys_swap_policy,
   [SYS_swap_stats]  = sys_swap_stats,
+  [SYS_swap_dump]   = sys_swap_dump,
   // clang-format on
 };
 
