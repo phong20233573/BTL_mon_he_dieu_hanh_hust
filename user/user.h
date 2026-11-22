@@ -27,6 +27,7 @@ int uptime(void);
 int sync(void);
 int swap_policy(int policy);
 int swap_stats(struct swap_stat *stats);
+int swap_dump(void);
 // ulib.c
 int stat(const char *, struct stat *);
 char *strcpy(char *, const char *);

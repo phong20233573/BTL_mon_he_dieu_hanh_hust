@@ -68,10 +68,12 @@ usertrap(void)
     syscall();
   } else if ((which_dev = devintr()) != 0) {
     // ok
-  } else if ((r_scause() == 15 || r_scause() == 13) &&
+  } else if ((r_scause() == 12 || r_scause() == 13 || r_scause() == 15) &&
              vmfault(p->pagetable, p->sz, r_stval(),
                      (r_scause() == 13) ? 1 : 0) != 0) {
-    // page fault on lazily-allocated page
+    // Handle instruction, load, and store page faults.
+    // This includes restoring swapped pages from swap storage.
+
   } else {
     printk("usertrap(): unexpected scause 0x%lx pid=%d\n", r_scause(), p->pid);
     printk("            sepc=0x%lx stval=0x%lx\n", r_sepc(), r_stval());
@@ -153,9 +155,16 @@ kerneltrap()
     panic("kerneltrap");
   }
 
-  // give up the CPU if this is a timer interrupt.
-  if (which_dev == 2 && myproc() != 0)
-    yield();
+  // Give up the CPU if this is a timer interrupt.
+  // A process reserved for swap-out (vm_busy, not waiting for disk)
+  // must keep running: the scheduler will not select it, so yielding
+  // here deadlocks when this is the only runnable CPU.
+  if (which_dev == 2 && myproc() != 0) {
+    struct proc *p = myproc();
+
+    if (!p->vm_busy || p->vm_io_wait)
+      yield();
+  }
 
   // the yield() may have caused some traps to occur,
   // so restore trap registers for use by kernelvec.S's sepc instruction.

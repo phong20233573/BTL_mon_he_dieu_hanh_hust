@@ -85,6 +85,17 @@ holding(struct spinlock *lk)
   return r;
 }
 
+int
+spinlock_depth(void)
+{
+  int depth;
+
+  push_off();
+  depth = mycpu()->noff - 1;
+  pop_off();
+  return depth;
+}
+
 // push_off/pop_off are like intr_off()/intr_on() except that they are matched:
 // it takes two pop_off()s to undo two push_off()s.  Also, if interrupts
 // are initially off, then push_off, pop_off leaves them off.

@@ -1,3 +1,4 @@
+
 #include "types.h"
 #include "param.h"
 #include "memlayout.h"
@@ -25,6 +26,9 @@ extern char trampoline[]; // trampoline.S
 // memory model when using p->parent.
 // must be acquired before any p->lock.
 struct spinlock wait_lock;
+static struct spinlock vm_reservation_lock;
+static uint vm_reservation_count;
+static char vm_reservation_channel;
 
 // Allocate a page for each process's kernel stack.
 // Map it high in memory, followed by an invalid
@@ -51,11 +55,161 @@ procinit(void)
 
   initlock(&pid_lock, "nextpid");
   initlock(&wait_lock, "wait_lock");
+  initlock(&vm_reservation_lock, "vm_reservation");
+  vm_reservation_count = 0;
   for (p = proc; p < &proc[NPROC]; p++) {
     initlock(&p->lock, "proc");
     p->state = UNUSED;
+    p->vm_busy = 0;
+    p->vm_io_wait = 0;
     p->kstack = KSTACK((int)(p - proc));
   }
+}
+
+// Reserve a process page table for swap I/O.
+//
+// Sleeping and runnable processes may be reserved.
+// The current running process may also be reserved because
+// swap I/O is performed synchronously in kernel mode.
+// Other running processes must not be modified.
+int
+proc_vm_reserve(pagetable_t pt)
+{
+  struct proc *p;
+  struct proc *current;
+
+  if (pt == 0)
+    return -1;
+
+  current = myproc();
+
+  acquire(&vm_reservation_lock);
+  for (p = proc; p < &proc[NPROC]; p++) {
+    acquire(&p->lock);
+
+    if (p->pagetable == pt) {
+      if (!p->vm_busy &&
+          (p->state == USED || p->state == SLEEPING || p->state == RUNNABLE ||
+           p->state == ZOMBIE || (p == current && p->state == RUNNING))) {
+
+        p->vm_busy = 1;
+        p->vm_io_wait = 0;
+        vm_reservation_count++;
+        release(&p->lock);
+        release(&vm_reservation_lock);
+        return 0;
+      }
+
+      int busy = p->vm_busy;
+      release(&p->lock);
+      release(&vm_reservation_lock);
+      return busy ? -2 : -1;
+    }
+
+    release(&p->lock);
+  }
+
+  release(&vm_reservation_lock);
+  return -1;
+}
+
+// Release a page-table reservation after swap I/O.
+int
+proc_vm_release(pagetable_t pt)
+{
+  struct proc *p;
+
+  if (pt == 0)
+    return -1;
+
+  acquire(&vm_reservation_lock);
+  for (p = proc; p < &proc[NPROC]; p++) {
+    acquire(&p->lock);
+
+    if (p->pagetable == pt) {
+      if (!p->vm_busy) {
+        release(&p->lock);
+        release(&vm_reservation_lock);
+        return -1;
+      }
+
+      p->vm_busy = 0;
+      p->vm_io_wait = 0;
+      if (vm_reservation_count == 0) {
+        release(&p->lock);
+        release(&vm_reservation_lock);
+        panic("proc_vm_release: reservation count");
+      }
+      vm_reservation_count--;
+      release(&p->lock);
+      release(&vm_reservation_lock);
+      wakeup(p);
+      wakeup(&vm_reservation_channel);
+      return 0;
+    }
+
+    release(&p->lock);
+  }
+
+  release(&vm_reservation_lock);
+  return -1;
+}
+
+int
+proc_vm_pid(pagetable_t pt)
+{
+  struct proc *p;
+
+  if (pt == 0)
+    return -1;
+
+  for (p = proc; p < &proc[NPROC]; p++) {
+    acquire(&p->lock);
+    if (p->pagetable == pt) {
+      int pid = p->pid;
+      release(&p->lock);
+      return pid;
+    }
+    release(&p->lock);
+  }
+
+  return -1;
+}
+
+// Sleep until an in-flight swap operation releases its page-table reservation.
+void
+proc_vm_wait(void)
+{
+  if (spinlock_depth() != 0)
+    panic("proc_vm_wait: spinlock held");
+
+  acquire(&vm_reservation_lock);
+  if (vm_reservation_count != 0) {
+    sleep_prepare(&vm_reservation_channel);
+    release(&vm_reservation_lock);
+    sleep();
+  } else {
+    release(&vm_reservation_lock);
+  }
+}
+
+// Mark or unmark the current process as waiting for I/O
+// while its page table is reserved for swap operations.
+void
+proc_vm_io_wait(int waiting)
+{
+  struct proc *p = myproc();
+
+  if (p == 0)
+    return;
+
+  acquire(&p->lock);
+
+  // Only a process holding a VM reservation needs this flag.
+  if (p->vm_busy)
+    p->vm_io_wait = waiting ? 1 : 0;
+
+  release(&p->lock);
 }
 
 // Must be called with interrupts disabled,
@@ -110,6 +264,8 @@ static struct proc *
 allocproc(void)
 {
   struct proc *p;
+  pagetable_t pagetable;
+  struct trapframe *trapframe;
 
   for (p = proc; p < &proc[NPROC]; p++) {
     acquire(&p->lock);
@@ -124,21 +280,23 @@ allocproc(void)
 found:
   p->pid = allocpid();
   p->state = USED;
+  p->vm_busy = 0;
+  p->vm_io_wait = 0;
+  p->trapframe = 0;
+  p->pagetable = 0;
+  p->sz = 0;
+  release(&p->lock);
 
-  // Allocate a trapframe page.
-  if ((p->trapframe = (struct trapframe *)kalloc()) == 0) {
-    freeproc(p);
-    release(&p->lock);
-    return 0;
-  }
+  // These allocations may need to reclaim user pages, which can sleep.
+  trapframe = (struct trapframe *)kalloc_user_page(0);
+  if (trapframe == 0)
+    goto alloc_failed;
+  p->trapframe = trapframe;
 
-  // An empty user page table.
-  p->pagetable = proc_pagetable(p);
-  if (p->pagetable == 0) {
-    freeproc(p);
-    release(&p->lock);
-    return 0;
-  }
+  pagetable = proc_pagetable(p);
+  if (pagetable == 0)
+    goto alloc_failed;
+  p->pagetable = pagetable;
 
   // Set up new context to start executing at forkret,
   // which returns to user space.
@@ -146,7 +304,14 @@ found:
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
 
+  acquire(&p->lock);
   return p;
+
+alloc_failed:
+  acquire(&p->lock);
+  freeproc(p);
+  release(&p->lock);
+  return 0;
 }
 
 // free a proc structure and the data hanging from it,
@@ -167,6 +332,8 @@ freeproc(struct proc *p)
   p->chan = 0;
   p->killed = 0;
   p->xstate = 0;
+  p->vm_busy = 0;
+  p->vm_io_wait = 0;
   p->state = UNUSED;
 }
 
@@ -267,12 +434,18 @@ kfork(void)
     return -1;
   }
 
+  // Swap I/O during uvmcopy may sleep, so don't hold the child's lock.
+  release(&np->lock);
+
   // Copy user memory from parent to child.
   if (uvmcopy(p->pagetable, np->pagetable, p->sz) < 0) {
+    acquire(&np->lock);
     freeproc(np);
     release(&np->lock);
     return -1;
   }
+
+  acquire(&np->lock);
   np->sz = p->sz;
 
   // copy saved user registers.
@@ -371,11 +544,13 @@ kwait(uint64 addr)
 {
   struct proc *pp;
   int havekids, pid;
+  int xstate;
   struct proc *p = myproc();
 
   acquire(&wait_lock);
 
   for (;;) {
+  restart:
     // Scan through table looking for exited children.
     havekids = 0;
     for (pp = proc; pp < &proc[NPROC]; pp++) {
@@ -385,15 +560,35 @@ kwait(uint64 addr)
 
         havekids = 1;
         if (pp->state == ZOMBIE) {
-          // Found one.
-          pid = pp->pid;
-          if (addr != 0 &&
-              copyout(p->pagetable, p->sz, addr, (char *)&pp->xstate,
-                      sizeof(pp->xstate)) < 0) {
+          if (pp->vm_busy) {
+            sleep_prepare(pp);
             release(&pp->lock);
             release(&wait_lock);
-            return -1;
+            sleep();
+            acquire(&wait_lock);
+            goto restart;
           }
+
+          // Save the exit status, then drop locks before copyout can fault
+          // in a swapped page and block on disk I/O.
+          pid = pp->pid;
+          xstate = pp->xstate;
+          release(&pp->lock);
+          release(&wait_lock);
+
+          if (addr != 0 && copyout(p->pagetable, p->sz, addr, (char *)&xstate,
+                                   sizeof(xstate)) < 0)
+            return -1;
+
+          acquire(&wait_lock);
+          acquire(&pp->lock);
+          if (pp->parent != p || pp->pid != pid || pp->state != ZOMBIE ||
+              pp->vm_busy) {
+            release(&pp->lock);
+            release(&wait_lock);
+            goto restart;
+          }
+
           pp->parent = 0;
           freeproc(pp);
           release(&pp->lock);
@@ -444,7 +639,7 @@ scheduler(void)
     int found = 0;
     for (p = proc; p < &proc[NPROC]; p++) {
       acquire(&p->lock);
-      if (p->state == RUNNABLE) {
+      if (p->state == RUNNABLE && (!p->vm_busy || p->vm_io_wait)) {
         // Switch to chosen process.  It is the process's job
         // to release its lock and then reacquire it
         // before jumping back to us.

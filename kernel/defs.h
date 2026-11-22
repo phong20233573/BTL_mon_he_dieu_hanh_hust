@@ -18,6 +18,7 @@ void            bwrite(struct buf*);
 void            bpin(struct buf*);
 void            bunpin(struct buf*);
 
+
 // console.c
 void            consoleinit(void);
 void            consoleintr(int);
@@ -50,6 +51,7 @@ void            iupdate(struct inode*);
 int             namecmp(const char*, const char*);
 struct inode*   namei(char*);
 struct inode*   nameiparent(char*, char*);
+
 int             readi(struct inode*, int, uint64, uint, uint);
 void            stati(struct inode*, struct stat*);
 int             writei(struct inode*, int, uint64, uint, uint);
@@ -59,15 +61,22 @@ void            ireclaim(int);
 // kalloc.c
 void*           kalloc(void);
 void            kfree(void *);
+void            kfree_victim(void *);
 void            kinit(void);
-// Reverse Mapping (RMAP)
-void rmap_mark_allocated(uint64 pa);
-int rmap_register(uint64 pa, pagetable_t pt, uint64 va);
-void rmap_pin(uint64 pa);
-void rmap_unregister(uint64 pa);
 
-uint64 select_victim_frame(void);
-int rmap_count_pt(pagetable_t pt);
+
+// RMAP - Reverse Mapping
+void            rmap_mark_allocated(uint64 pa);
+int             rmap_register(uint64 pa, pagetable_t pt, uint64 va);
+void            rmap_pin(uint64 pa);
+int             rmap_unregister(uint64 pa);
+int             rmap_unregister_victim(uint64 pa);
+int             rmap_select_victim_after(uint64 *, pagetable_t *, uint64 *,
+                                         uint64 *, uint64, pagetable_t);
+int             rmap_reserve_victim(uint64, pagetable_t, uint64, uint64);
+int             rmap_count_pt(pagetable_t pt);
+int             rmap_release_victim(uint64);
+
 
 // log.c
 void            initlog(int, struct superblock*);
@@ -100,6 +109,10 @@ void            setkilled(struct proc*);
 struct cpu*     mycpu(void);
 struct proc*    myproc();
 void            procinit(void);
+int             proc_vm_reserve(pagetable_t);
+int             proc_vm_release(pagetable_t);
+void            proc_vm_wait(void);
+void            proc_vm_io_wait(int);
 void            scheduler(void) __attribute__((noreturn));
 void            sched(void);
 void            sleep_prepare(void*);
@@ -118,6 +131,7 @@ void            swtch(struct context*, struct context*);
 // spinlock.c
 void            acquire(struct spinlock*);
 int             holding(struct spinlock*);
+int             spinlock_depth(void);
 void            initlock(struct spinlock*, char*);
 void            release(struct spinlock*);
 void            push_off(void);
@@ -173,6 +187,7 @@ void            uvmunmap(pagetable_t, uint64, uint64, int);
 void            uvmclear(pagetable_t, uint64);
 pte_t *         walk(pagetable_t, uint64, int);
 uint64          walkaddr(pagetable_t, uint64);
+char*           kalloc_user_page(int);
 int             copyout(pagetable_t, uint64, uint64, char *, uint64);
 int             copyin(pagetable_t, uint64, char *, uint64, uint64);
 int             copyinstr(pagetable_t, uint64, char *, uint64, uint64);
@@ -192,10 +207,24 @@ void		virtio_swap_rw(void *, uint, int);
 void            virtio_disk_intr(int);
 
 // Swap management
+struct swap_stat;
+
 void            swap_init(void);
 int             swap_alloc(void);
+int             swap_alloc_emergency(void);
 void            swap_free(uint);
-void            swap_out(uint, void *);
+void            swap_out(uint, void *, int, uint64);
 void            swap_in(uint, void *);
+void            swap_in_commit(uint);
+void            swap_in_abort(uint);
+int             swapout_one(void);
+int             swapout_one_for_swapin(void);
+
+void            swap_get_stats(struct swap_stat *);
+int             swap_set_policy(int);
+void            swap_page_fault(void);
+void            swap_dump_owners(void);
+int             proc_vm_pid(pagetable_t);
+
 // number of elements in fixed-size array
 #define NELEM(x) (sizeof(x) / sizeof((x)[0]))

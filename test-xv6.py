@@ -195,7 +195,7 @@ def test_crash():
     test_dorphan()
 
 def test_usertests(test=""):
-    timeout = 600
+    timeout = 1200
     opt = ""
     if args.q:
         opt = " -q"

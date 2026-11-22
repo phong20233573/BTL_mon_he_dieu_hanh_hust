@@ -23,3 +23,4 @@
 #define SYS_sync        22
 #define SYS_swap_policy 23
 #define SYS_swap_stats  24
+#define SYS_swap_dump   25
