@@ -145,8 +145,8 @@ sys_swap_stats(void)
   swap_get_stats(&stats);
 
   // Copy statistics from Kernel to User space.
-  if (copyout(p->pagetable, p->sz, user_addr,
-              (char *)&stats, sizeof(stats)) < 0)
+  if (copyout(p->pagetable, p->sz, user_addr, (char *)&stats, sizeof(stats)) <
+      0)
     return -1;
 
   return 0;

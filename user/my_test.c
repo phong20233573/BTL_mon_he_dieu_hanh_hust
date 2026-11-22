@@ -24,11 +24,8 @@ main(int argc, char *argv[])
   ret = swap_stats(&st);
 
   if (ret == 0) {
-    printf("Policy=%d, Faults=%d, Out=%d, In=%d, Slots=%d\n",
-           st.current_policy,
-           (int)st.page_faults,
-           (int)st.swap_out_count,
-           (int)st.swap_in_count,
+    printf("Policy=%d, Faults=%d, Out=%d, In=%d, Slots=%d\n", st.current_policy,
+           (int)st.page_faults, (int)st.swap_out_count, (int)st.swap_in_count,
            (int)st.used_slots);
   }
 
@@ -59,8 +56,7 @@ main(int argc, char *argv[])
   int ret_kern = swap_stats((struct swap_stat *)0x80000000L);
   int ret_unmap = swap_stats((struct swap_stat *)0x3FFFFFFFFFL);
 
-  check("TC5: Tu choi dia chi khong hop le",
-        ret_kern == -1 && ret_unmap == -1);
+  check("TC5: Tu choi dia chi khong hop le", ret_kern == -1 && ret_unmap == -1);
 
   printf("=== END SWAP SYSCALL TEST ===\n");
 

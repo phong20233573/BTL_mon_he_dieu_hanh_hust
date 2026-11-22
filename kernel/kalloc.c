@@ -112,8 +112,7 @@ kfree(void *pa)
 {
   struct run *r;
 
-  if (((uint64)pa % PGSIZE) != 0 || (char *)pa < end ||
-      (uint64)pa >= PHYSTOP)
+  if (((uint64)pa % PGSIZE) != 0 || (char *)pa < end || (uint64)pa >= PHYSTOP)
     panic("kfree");
 
   // Never free a frame reserved by an in-progress swap-out.
@@ -138,8 +137,7 @@ kfree_victim(void *pa)
 {
   struct run *r;
 
-  if (((uint64)pa % PGSIZE) != 0 || (char *)pa < end ||
-      (uint64)pa >= PHYSTOP)
+  if (((uint64)pa % PGSIZE) != 0 || (char *)pa < end || (uint64)pa >= PHYSTOP)
     panic("kfree_victim");
 
   if (rmap_unregister_victim((uint64)pa) != 0)
@@ -265,8 +263,7 @@ rmap_unregister_victim(uint64 pa)
 
   acquire(&rmap_lock);
 
-  if (!rmap[idx].valid || !rmap[idx].busy ||
-      rmap[idx].pagetable == 0) {
+  if (!rmap[idx].valid || !rmap[idx].busy || rmap[idx].pagetable == 0) {
     release(&rmap_lock);
     return -1;
   }
@@ -307,8 +304,7 @@ rmap_pin(uint64 pa)
 
 int
 rmap_select_victim_after(uint64 *pa, pagetable_t *pt, uint64 *va,
-                         uint64 *sequence, uint64 after,
-                         pagetable_t skip_pt)
+                         uint64 *sequence, uint64 after, pagetable_t skip_pt)
 {
   int victim_idx = -1;
   uint64 oldest = (uint64)-1;
@@ -394,8 +390,7 @@ rmap_release_victim(uint64 pa)
 
   acquire(&rmap_lock);
 
-  if (!rmap[idx].valid || !rmap[idx].busy ||
-      rmap[idx].pagetable == 0) {
+  if (!rmap[idx].valid || !rmap[idx].busy || rmap[idx].pagetable == 0) {
     release(&rmap_lock);
     return -1;
   }

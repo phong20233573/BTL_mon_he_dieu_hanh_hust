@@ -89,11 +89,8 @@ proc_vm_reserve(pagetable_t pt)
 
     if (p->pagetable == pt) {
       if (!p->vm_busy &&
-          (p->state == USED ||
-           p->state == SLEEPING ||
-           p->state == RUNNABLE ||
-           p->state == ZOMBIE ||
-           (p == current && p->state == RUNNING))) {
+          (p->state == USED || p->state == SLEEPING || p->state == RUNNABLE ||
+           p->state == ZOMBIE || (p == current && p->state == RUNNING))) {
 
         p->vm_busy = 1;
         p->vm_io_wait = 0;
@@ -214,7 +211,6 @@ proc_vm_io_wait(int waiting)
 
   release(&p->lock);
 }
-
 
 // Must be called with interrupts disabled,
 // to prevent race with process being moved
@@ -580,15 +576,14 @@ kwait(uint64 addr)
           release(&pp->lock);
           release(&wait_lock);
 
-          if (addr != 0 &&
-              copyout(p->pagetable, p->sz, addr, (char *)&xstate,
-                      sizeof(xstate)) < 0)
+          if (addr != 0 && copyout(p->pagetable, p->sz, addr, (char *)&xstate,
+                                   sizeof(xstate)) < 0)
             return -1;
 
           acquire(&wait_lock);
           acquire(&pp->lock);
-          if (pp->parent != p || pp->pid != pid ||
-              pp->state != ZOMBIE || pp->vm_busy) {
+          if (pp->parent != p || pp->pid != pid || pp->state != ZOMBIE ||
+              pp->vm_busy) {
             release(&pp->lock);
             release(&wait_lock);
             goto restart;
@@ -644,8 +639,7 @@ scheduler(void)
     int found = 0;
     for (p = proc; p < &proc[NPROC]; p++) {
       acquire(&p->lock);
-      if (p->state == RUNNABLE &&
-         (!p->vm_busy || p->vm_io_wait)) {
+      if (p->state == RUNNABLE && (!p->vm_busy || p->vm_io_wait)) {
         // Switch to chosen process.  It is the process's job
         // to release its lock and then reacquire it
         // before jumping back to us.

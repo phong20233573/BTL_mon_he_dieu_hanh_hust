@@ -268,8 +268,8 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
 
   // Release empty lower-level page-table pages left behind by a failed
   // growth rollback or a partial sbrk shrink.
-  for (uint64 l2base = va & ~((1L << 30) - 1);
-       l2base < end; l2base += 1L << 30) {
+  for (uint64 l2base = va & ~((1L << 30) - 1); l2base < end;
+       l2base += 1L << 30) {
     pte_t *l1pte = &pagetable[PX(2, l2base)];
     if ((*l1pte & PTE_V) == 0)
       continue;
@@ -745,8 +745,8 @@ swapout_one_internal(int emergency)
 
     // Try eligible FIFO frames in increasing load_time order.
     for (;;) {
-      if (rmap_select_victim_after(&pa, &pt, &va,
-                                   &sequence, after, skip_pt) < 0) {
+      if (rmap_select_victim_after(&pa, &pt, &va, &sequence, after, skip_pt) <
+          0) {
         break;
       }
       // Advance the cursor even if this candidate cannot be reserved.
@@ -772,8 +772,8 @@ swapout_one_internal(int emergency)
       // The process cannot run while vm_busy is set.
       pte = walk(pt, va, 0);
 
-      if (pte == 0 || (*pte & PTE_V) == 0 ||
-          (*pte & PTE_U) == 0 || PTE2PA(*pte) != pa) {
+      if (pte == 0 || (*pte & PTE_V) == 0 || (*pte & PTE_U) == 0 ||
+          PTE2PA(*pte) != pa) {
         if (rmap_release_victim(pa) < 0)
           panic("swapout: release invalid victim");
         if (proc_vm_release(pt) < 0)
@@ -782,8 +782,7 @@ swapout_one_internal(int emergency)
       }
 
       // Reserve a swap slot before performing disk I/O.
-      allocated_slot =
-        emergency ? swap_alloc_emergency() : swap_alloc();
+      allocated_slot = emergency ? swap_alloc_emergency() : swap_alloc();
 
       if (allocated_slot < 0) {
         if (rmap_release_victim(pa) < 0)
@@ -800,8 +799,7 @@ swapout_one_internal(int emergency)
       swap_out(slot, (void *)pa, proc_vm_pid(pt), va);
 
       // Reservation should keep this mapping stable. Revalidate anyway.
-      if ((*pte & PTE_V) == 0 || (*pte & PTE_U) == 0 ||
-          PTE2PA(*pte) != pa) {
+      if ((*pte & PTE_V) == 0 || (*pte & PTE_U) == 0 || PTE2PA(*pte) != pa) {
         swap_free(slot);
 
         if (rmap_release_victim(pa) < 0)

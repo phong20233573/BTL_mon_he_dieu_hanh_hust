@@ -13,16 +13,14 @@
 #include "buf.h"
 #include "virtio.h"
 
-#define NDISK                 2
-#define SECTOR_SIZE           512
-#define SECTORS_PER_PAGE      (PGSIZE / SECTOR_SIZE)
-#define SWAP_DISK_SIZE_BYTES  (64ULL * 1024 * 1024)
-#define SWAP_SLOT_COUNT       (SWAP_DISK_SIZE_BYTES / PGSIZE)
+#define NDISK                2
+#define SECTOR_SIZE          512
+#define SECTORS_PER_PAGE     (PGSIZE / SECTOR_SIZE)
+#define SWAP_DISK_SIZE_BYTES (64ULL * 1024 * 1024)
+#define SWAP_SLOT_COUNT      (SWAP_DISK_SIZE_BYTES / PGSIZE)
 
 // Access MMIO registers of a specific device.
 #define R(d, r) ((volatile uint32 *)((d)->mmio + (r)))
-
-
 
 struct disk {
   uint64 mmio;
@@ -59,10 +57,8 @@ virtio_read_capacity(struct disk *d)
   do {
     generation = *R(d, VIRTIO_MMIO_CONFIG_GENERATION);
 
-    low = *R(d, VIRTIO_MMIO_CONFIG +
-                VIRTIO_BLK_CONFIG_CAPACITY);
-    high = *R(d, VIRTIO_MMIO_CONFIG +
-                 VIRTIO_BLK_CONFIG_CAPACITY + 4);
+    low = *R(d, VIRTIO_MMIO_CONFIG + VIRTIO_BLK_CONFIG_CAPACITY);
+    high = *R(d, VIRTIO_MMIO_CONFIG + VIRTIO_BLK_CONFIG_CAPACITY + 4);
 
     generation_after = *R(d, VIRTIO_MMIO_CONFIG_GENERATION);
   } while (generation != generation_after);
@@ -128,8 +124,7 @@ virtio_disk_init_one(struct disk *d, uint64 mmio, char *name)
   if (d->capacity_sectors == 0)
     panic("virtio disk has zero capacity");
 
-  printk("VirtIO capacity: %d sectors\n",
-       (int)d->capacity_sectors);
+  printk("VirtIO capacity: %d sectors\n", (int)d->capacity_sectors);
 
   // Initialize queue 0.
   *R(d, VIRTIO_MMIO_QUEUE_SEL) = 0;
@@ -187,8 +182,7 @@ virtio_disk_init(void)
   virtio_disk_init_one(&disks[0], VIRTIO0, "virtio_disk0");
   virtio_disk_init_one(&disks[1], VIRTIO1, "virtio_disk1");
 
-  if (disks[1].capacity_sectors <
-      SWAP_SLOT_COUNT * SECTORS_PER_PAGE)
+  if (disks[1].capacity_sectors < SWAP_SLOT_COUNT * SECTORS_PER_PAGE)
     panic("swap disk capacity too small");
 
   printk("VirtIO disk 0 initialized: fs.img\n");
@@ -275,8 +269,7 @@ virtio_rw(struct disk *d, void *data, uint len, uint64 sector, int write)
 
   sectors = len / SECTOR_SIZE;
 
-  if (sector > d->capacity_sectors ||
-      sectors > d->capacity_sectors - sector)
+  if (sector > d->capacity_sectors || sectors > d->capacity_sectors - sector)
     panic("virtio_rw: request out of range");
 
   volatile int done = 0;
@@ -404,8 +397,7 @@ virtio_swap_rw(void *data, uint slot, int write)
   sector = (uint64)slot * SECTORS_PER_PAGE;
   capacity_sectors = SWAP_DISK_SIZE_BYTES / SECTOR_SIZE;
 
-  if (sector > capacity_sectors ||
-      SECTORS_PER_PAGE > capacity_sectors - sector)
+  if (sector > capacity_sectors || SECTORS_PER_PAGE > capacity_sectors - sector)
     panic("virtio_swap_rw: request out of range");
 
   virtio_rw(&disks[1], data, PGSIZE, sector, write);

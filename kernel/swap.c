@@ -7,10 +7,10 @@
 // Swap disk: 64 MB
 // Page size: 4096 bytes
 // Number of slots: 64 MB / 4096 = 16384
-#define SWAP_DISK_SIZE   (64 * 1024 * 1024)
-#define SWAP_SLOTS       (SWAP_DISK_SIZE / PGSIZE)
+#define SWAP_DISK_SIZE      (64 * 1024 * 1024)
+#define SWAP_SLOTS          (SWAP_DISK_SIZE / PGSIZE)
 #define SWAP_RESERVED_SLOTS 1
-#define SWAP_BITMAP_SIZE ((SWAP_SLOTS + 7) / 8)
+#define SWAP_BITMAP_SIZE    ((SWAP_SLOTS + 7) / 8)
 
 enum swap_slot_state {
   SLOT_FREE,
@@ -87,8 +87,7 @@ swap_alloc_internal(int emergency)
 {
   acquire(&swap_lock);
 
-  if (!emergency &&
-      swap_stats.used_slots >= SWAP_SLOTS - SWAP_RESERVED_SLOTS) {
+  if (!emergency && swap_stats.used_slots >= SWAP_SLOTS - SWAP_RESERVED_SLOTS) {
     release(&swap_lock);
     return -1;
   }
