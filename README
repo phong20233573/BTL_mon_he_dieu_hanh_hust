@@ -46,3 +46,7 @@ You will need a RISC-V "newlib" tool chain from
 https://github.com/riscv/riscv-gnu-toolchain, and qemu compiled for
 riscv64-softmmu.  Once they are installed, and in your shell
 search path, you can run "make qemu".
+
+This project configures QEMU with 64 MiB of RAM. To verify that user memory
+larger than the previous 32 MiB configuration is usable without swap, run
+`x2ram` from the xv6 shell. The test allocates, writes, and verifies 40 MiB.

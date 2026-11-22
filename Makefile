@@ -57,6 +57,7 @@ QEMU = qemu-system-riscv64
 MIN_QEMU_VERSION = 7.2
 
 CC = $(TOOLPREFIX)gcc
+CXX = $(TOOLPREFIX)g++
 LD = $(TOOLPREFIX)ld
 OBJCOPY = $(TOOLPREFIX)objcopy
 OBJDUMP = $(TOOLPREFIX)objdump
@@ -80,6 +81,8 @@ CFLAGS += -fno-builtin-memcpy -Wno-main
 CFLAGS += -fno-builtin-printf -fno-builtin-fprintf -fno-builtin-vprintf
 CFLAGS += -I.
 CFLAGS += $(shell $(CC) -fno-stack-protector -E -x c /dev/null >/dev/null 2>&1 && echo -fno-stack-protector)
+CXXFLAGS = $(filter-out -std=gnu99,$(CFLAGS)) -std=gnu++11
+CXXFLAGS += -fno-exceptions -fno-rtti -fno-use-cxa-atexit
 
 # Disable PIE when possible (for Ubuntu 16.10 toolchain)
 ifneq ($(shell $(CC) -dumpspecs 2>/dev/null | grep -e '[^f]no-pie'),)
@@ -114,6 +117,9 @@ $U/usys.S : $U/usys.pl
 
 $U/usys.o : $U/usys.S
 	$(CC) $(CFLAGS) -c -o $U/usys.o $U/usys.S
+
+$U/x2ram.o: $U/x2ram.cpp
+	$(CXX) $(CXXFLAGS) -c -o $@ $<
 
 $U/_forktest: $U/forktest.o $(ULIB)
 	# forktest has less library code linked in - needs to be small
@@ -152,6 +158,7 @@ UPROGS=\
 	$U/_dorphan\
 	$U/_sync\
 	$U/_my_test\
+	$U/_x2ram\
 
 fs.img: mkfs/mkfs README $(UPROGS)
 	mkfs/mkfs fs.img README $(UPROGS)
@@ -176,7 +183,7 @@ ifndef CPUS
 CPUS := 3
 endif
 
-QEMUOPTS = -machine virt -bios none -kernel $K/kernel -m 32M -smp $(CPUS) -nographic
+QEMUOPTS = -machine virt -bios none -kernel $K/kernel -m 64M -smp $(CPUS) -nographic
 QEMUOPTS += -global virtio-mmio.force-legacy=false
 QEMUOPTS += -drive file=fs.img,if=none,format=raw,id=x0
 QEMUOPTS += -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0
