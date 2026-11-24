@@ -1,8 +1,6 @@
-extern "C" {
 #include "kernel/types.h"
 #include "kernel/swap.h"
 #include "user/user.h"
-}
 
 #define PGSIZE 4096
 #define TEST_SIZE (40 * 1024 * 1024)
@@ -15,7 +13,7 @@ pattern(uint page, uint word)
 }
 
 int
-main()
+main(void)
 {
   struct swap_stat before, after;
   volatile uint *memory;
